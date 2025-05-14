@@ -16,8 +16,7 @@ logger = logging.getLogger(__name__)
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except locale.Error:
-    st.warning("Locale 'pt_BR.UTF-8' não disponível. Usando formatação padrão.")
-    locale.setlocale(locale.LC_ALL, '')
+    logger.warning("Locale 'pt_BR.UTF-8' não disponível. Usando formatação manual.")
 
 # Configuração do cliente Supabase usando secrets do Streamlit Cloud
 @st.cache_resource
@@ -162,6 +161,10 @@ def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, dat
         st.warning("Nenhum dado correspondente encontrado ao combinar VWSOMELIER e PCVENDEDOR.")
         return pd.DataFrame(), pd.DataFrame()
 
+    # Remove NaN em PVENDA/QT antes de calcular TOTAL_VENDAS
+    data_filtrada = data_filtrada[data_filtrada['PVENDA'].notna() & data_filtrada['QT'].notna()]
+    logger.info(f"Linhas após remover NaN em PVENDA/QT: {len(data_filtrada)}")
+
     # Calcular o total de vendas (PVENDA * QT)
     data_filtrada['TOTAL_VENDAS'] = data_filtrada['PVENDA'] * data_filtrada['QT']
 
@@ -172,6 +175,10 @@ def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, dat
         total_clientes=('CODCLIENTE', 'nunique'),
         total_pedidos=('NUMPED', 'nunique'),
     ).reset_index()
+
+    # Ensure TOTAL VENDAS is numeric and handle NaN
+    vendedores['total_vendas'] = pd.to_numeric(vendedores['total_vendas'], errors='coerce').fillna(0)
+    logger.info(f"Valores em total_vendas após limpeza: {vendedores['total_vendas'].head().tolist()}")
 
     vendedores.rename(columns={
         'CODUSUR': 'RCA',
@@ -194,13 +201,25 @@ def exibir_detalhes_vendedores(vendedores):
         """,
         unsafe_allow_html=True)
 
+    # Log para debug
+    logger.info(f"Tipos de dados em vendedores: {vendedores.dtypes}")
+    logger.info(f"Amostra de TOTAL VENDAS: {vendedores['TOTAL VENDAS'].head().tolist()}")
+
     st.dataframe(vendedores.style.format({
         'TOTAL VENDAS': formatar_valor,
     }), use_container_width=True)
 
 def formatar_valor(valor):
     """Função para formatar valores monetários com separador de milhar e vírgula como decimal"""
-    return locale.currency(valor, grouping=True, symbol=True)
+    try:
+        # Ensure valor is a valid number
+        if pd.isna(valor) or valor is None:
+            return "R$ 0,00"
+        valor = float(valor)  # Convert to float to handle numeric types
+        return locale.currency(valor, grouping=True, symbol=True)
+    except (ValueError, TypeError, locale.Error):
+        # Fallback formatting if locale.currency fails
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def exibir_grafico_vendas_por_vendedor(data, vendedor_selecionado, ano_selecionado):
     # Filtrar dados pelo vendedor e ano selecionado
