@@ -138,7 +138,6 @@ def auto_reload():
 
 # Função principal
 def main():
-    st.set_page_config(page_title="Análise de Estoque e Vendas", layout="wide")
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
