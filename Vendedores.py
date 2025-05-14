@@ -345,7 +345,6 @@ def criar_tabela_vendas_mensais_por_produto(data, fornecedor, ano):
     return tabela
 
 def main():
-    st.set_page_config(page_title="Detalhes Vendedores", layout="wide")
     
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
