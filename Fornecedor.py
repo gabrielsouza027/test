@@ -121,7 +121,7 @@ def fetch_estoque_data():
     if not df.empty:
         for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCC']:
+        for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCOMPRA']:
             df[col] = pd.to_datetime(df[col], errors='coerce')
     return df
 
