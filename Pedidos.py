@@ -56,7 +56,7 @@ def formatar_valor(valor):
 
 # Função para buscar dados do Supabase com cache e paginação
 @st.cache_data(show_spinner=False, ttl=60)
-def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-05-13"):
+def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-05-14"):
     data = {}
     for table_config in SUPABASE_CONFIG:
         table_name = table_config["table_name"]
@@ -165,7 +165,6 @@ def auto_reload():
         st.rerun()  # Forçar reload da página
 
 def main():
-    
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
@@ -298,9 +297,14 @@ def main():
 
     st.markdown("<h1>Relatório de Pedidos</h1>", unsafe_allow_html=True)
 
-    # Definir período padrão (ex.: 1º de janeiro até 13/05/2025)
+    # Botão para limpar cache manualmente
+    if st.button("Limpar Cache"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # Definir período padrão (1º de janeiro até 14/05/2025)
     data_inicial_default = "2025-01-01"
-    data_final_default = "2025-05-13"
+    data_final_default = "2025-05-14"
 
     # Buscar dados do Supabase com cache
     caches = {config["table_name"]: config["cache"] for config in SUPABASE_CONFIG}
@@ -309,13 +313,17 @@ def main():
     data_1 = data.get('PCMOVENDPEND', pd.DataFrame())
     data_2 = data.get('PCPEDC_POSICAO', pd.DataFrame())
 
-    # Ajustar para a data e hora atuais: 09:12 PM -03, 13/05/2025
-    hoje = date(2025, 5, 13)
+    # Ajustar para a data atual: 14/05/2025
+    hoje = date(2025, 5, 14)
     inicio_semana = hoje - timedelta(days=hoje.weekday())
     inicio_mes = hoje.replace(day=1)
 
     if not data_1.empty or not data_2.empty:
         daily_data, total_data = process_data(data_1)
+        logger.info(f"Colunas de daily_data: {daily_data.columns.tolist()}")
+        if not daily_data.empty:
+            logger.info(f"Primeiras linhas de daily_data: {daily_data.head().to_dict()}")
+
         if not data_2.empty:
             data_2['DATA'] = pd.to_datetime(data_2['DATA'], errors='coerce')
             data_2 = data_2.dropna(subset=['DATA'])  # Remover linhas com DATA inválida
@@ -333,9 +341,10 @@ def main():
                 pedidos_montados=('M_COUNT', 'sum')
             ).reset_index()
 
-        total_dia = daily_data[daily_data['DIA'] == hoje]['PEDIDOS CONFERIDOS'].sum() if not daily_data.empty else 0
-        total_semana = daily_data[(daily_data['DIA'] >= inicio_semana) & (daily_data['DIA'] <= hoje)]['PEDIDOS CONFERIDOS'].sum() if not daily_data.empty else 0
-        total_mes = daily_data[(daily_data['DIA'] >= inicio_mes) & (daily_data['DIA'] <= hoje)]['PEDIDOSactical CONFERIDOS'].sum() if not daily_data.empty else 0
+        # Calcular totais com validação de coluna
+        total_dia = daily_data[daily_data['DIA'] == hoje]['PEDIDOS CONFERIDOS'].sum() if not daily_data.empty and 'PEDIDOS CONFERIDOS' in daily_data.columns else 0
+        total_semana = daily_data[(daily_data['DIA'] >= inicio_semana) & (daily_data['DIA'] <= hoje)]['PEDIDOS CONFERIDOS'].sum() if not daily_data.empty and 'PEDIDOS CONFERIDOS' in daily_data.columns else 0
+        total_mes = daily_data[(daily_data['DIA'] >= inicio_mes) & (daily_data['DIA'] <= hoje)]['PEDIDOS CONFERIDOS'].sum() if not daily_data.empty and 'PEDIDOS CONFERIDOS' in daily_data.columns else 0
 
         # Duas colunas lado a lado
         col1, col2 = st.columns([1, 1])
