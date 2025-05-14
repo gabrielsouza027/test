@@ -44,7 +44,7 @@ SUPABASE_CONFIG = {
     "estoque": {
         "table": "ESTOQUE",
         "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
-                    "QTINDENIZ", "DTULTPEDCC", "BLOQUEADA", "NOME_PROD"]
+                    "QTINDENIZ", "DTULTPEDCCOMPRA", "BLOQUEADA", "NOME_PRODUTO"]
     }
     # Adicione mais tabelas aqui, se necessário
     # "outra_tabela": {
