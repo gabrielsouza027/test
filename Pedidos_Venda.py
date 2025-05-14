@@ -145,7 +145,6 @@ def auto_reload():
 
 # Função principal do Streamlit
 def main():
-    st.set_page_config(page_title="Pedidos de Venda", layout="wide")
     st.title("Pedidos de Venda")
 
     # Chamar auto_reload para verificar se precisa atualizar
