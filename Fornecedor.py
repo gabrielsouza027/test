@@ -40,12 +40,12 @@ SUPABASE_CONFIG = {
     "vendas": {
         "table": "VWSOMELIER",
         "columns": ["id", "DESCRICAO_1", "DESCRICAO_2", "CODPROD", "DATA", "QT", "PVENDA", 
-                    "VL_CUSTOFIN", "CONDVENDA", "NUMPED", "CODOPER", "DTCANCEL"]
+                    "VLCUSTOFIN", "CONDVENDA", "NUMPED", "CODOPER", "DTCANCEL"]
     },
     "estoque": {
         "table": "ESTOQUE",
         "columns": ["id", "QTULTENT", "DTULTENT", "DTULTSAIDA", "CODFILIAL", "CODPROD", 
-                    "QT_ESTOQUE", "QTRESERV", "QTINDENIZ", "DTULTPEDCC", "BLOQUEADA", "NOME_PROD"]
+                    "QT_ESTOQUE", "QTRESERV", "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"]
     }
     # Adicione mais tabelas aqui, se necessário
     # "outra_tabela": {
@@ -65,7 +65,7 @@ def fetch_supabase_data(_cache, table, columns_expected):
     try:
         all_data = []
         offset = 0
-        limit = 1000  # Limite por página do Supabase
+        limit = 1000000  # Limite por página do Supabase
 
         while True:
             response = supabase.table(table).select("*").range(offset, offset + limit - 1).execute()
@@ -106,7 +106,7 @@ def fetch_vendas_data():
     config = SUPABASE_CONFIG["vendas"]
     df = fetch_supabase_data(cache_vendas, config["table"], config["columns"])
     if not df.empty:
-        for col in ['QT', 'PVENDA', 'VL_CUSTOFIN', 'CONDVENDA', 'NUMPED']:
+        for col in ['QT', 'PVENDA', 'VLCUSTOFIN', 'CONDVENDA', 'NUMPED']:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
         df['DTCANCEL'] = pd.to_datetime(df['DTCANCEL'], errors='coerce')
@@ -169,7 +169,7 @@ def main():
         st.warning("Não há dados de estoque disponíveis.")
     else:
         # Verificar se os produtos com vendas estão sem estoque
-        merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PROD', 'QT_ESTOQUE']], 
+        merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], 
                             on='CODPROD', how='left')
 
         # Filtrando os produtos que NÃO possuem estoque
@@ -182,7 +182,7 @@ def main():
         df = estoque_df.copy()
         df = df.rename(columns={
             'CODPROD': 'Código do Produto',
-            'NOME_PROD': 'Nome do Produto',
+            'NOME_PRODUTO': 'Nome do Produto',
             'QTULTENT': 'Quantidade Última Entrada',
             'QT_ESTOQUE': 'Estoque Disponível',
             'QTRESERV': 'Quantidade Reservada',
@@ -190,7 +190,7 @@ def main():
             'DTULTENT': 'Data Última Entrada',
             'DTULTSAIDA': 'Data Última Saída',
             'CODFILIAL': 'Código da Filial',
-            'DTULTPEDCC': 'Data Último Pedido Compra',
+            'DTULTPEDCOMPRA': 'Data Último Pedido Compra',
             'BLOQUEADA': 'Quantidade Bloqueada'
         })
 
