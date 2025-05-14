@@ -1,0 +1,14 @@
+{
+    "gabriellopes": {
+        "password": "gs123",
+        "name": "Gabriel de Souza Lopes",
+        "permissions": ["Produto", "Estoque", "Fornecedor", "Vendedores", "Pedidos","Pedidos Venda", "Positivacao"]
+    },
+    
+    "karencristina": {
+        "password": "karen1234",
+        "name": "Karen Cristina",
+        "permissions": [ "Fornecedor", "Vendedores",  "Positivacao"]
+    }
+    
+}
