@@ -64,7 +64,7 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None):
     try:
         all_data = []
         offset = 0
-        limit = 1000  # Limite por página do Supabase
+        limit = 10000  # Limite por página do Supabase
 
         while True:
             response = supabase.table(table).select("*").range(offset, offset + limit - 1).execute()
@@ -119,7 +119,7 @@ def fetch_estoque_data():
         for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCC']:
+        for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCOMPRA']:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
     return df
@@ -165,7 +165,7 @@ def main():
         st.warning("Não há dados de estoque para o período selecionado.")
     else:
         # Verificar se os produtos com alta venda estão sem estoque
-        merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PROD', 'QT_ESTOQUE']], on='CODPROD', how='left')
+        merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
 
         # Filtrando os produtos que NÃO possuem estoque
         sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
@@ -178,14 +178,14 @@ def main():
         df = df.rename(columns={
             'CODFILIAL': 'Código da Filial',
             'CODPROD': 'Código do Produto',
-            'NOME_PROD': 'Nome do Produto',
+            'NOME_PRODUTO': 'Nome do Produto',
             'QTULTENT': 'Quantidade Última Entrada',
             'QT_ESTOQUE': 'Estoque Disponível',
             'QTRESERV': 'Quantidade Reservada',
             'QTINDENIZ': 'Quantidade Avariada',
             'DTULTENT': 'Data Última Entrada',
             'DTULTSAIDA': 'Data Última Saída',
-            'DTULTPEDCC': 'Data Último Pedido Compra',
+            'DTULTPEDCOMPRA': 'Data Último Pedido Compra',
             'BLOQUEADA': 'Quantidade Bloqueada'
         })
 
@@ -252,7 +252,7 @@ def main():
 
             sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
                 'CODPROD': 'CÓDIGO PRODUTO',
-                'NOME_PROD': 'NOME DO PRODUTO',
+                'NOME_PRODUTO': 'NOME DO PRODUTO',
                 'QT': 'QUANTIDADE VENDIDA',
                 'QT_ESTOQUE': 'ESTOQUE TOTAL'
             })
