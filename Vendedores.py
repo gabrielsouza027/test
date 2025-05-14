@@ -366,7 +366,12 @@ def criar_tabela_vendas_mensais_por_produto(data, fornecedor, ano):
     return tabela
 
 def main():
-    
+    # Botão para limpar cache
+    if st.button("Limpar Cache"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
@@ -393,7 +398,7 @@ def main():
         """,
         unsafe_allow_html=True)
     data_inicial = st.date_input("Data Inicial", value=date(2024, 4, 7))
-    data_final = st.date_input("Data Final", value=date(2025, 5, 13))
+    data_final = st.date_input("Data Final", value=date(2025, 5, 14))
 
     if data_inicial > data_final:
         st.error("A Data Inicial não pode ser maior que a Data Final.")
@@ -436,7 +441,7 @@ def main():
     # Seletor de data para a seção de vendas por cliente
     st.markdown("### Filtro de Período")
     vendas_data_inicial = st.date_input("Data Inicial para Vendas", value=date(2024, 1, 1), key="vendas_inicial")
-    vendas_data_final = st.date_input("Data Final para Vendas", value=date(2025, 5, 13), key="vendas_final")
+    vendas_data_final = st.date_input("Data Final para Vendas", value=date(2025, 5, 14), key="vendas_final")
 
     if vendas_data_inicial > vendas_data_final:
         st.error("A Data Inicial não pode ser maior que a Data Final na seção de vendas por cliente.")
