@@ -153,7 +153,7 @@ def formatar_valor(valor):
         return f"R$ {valor:,.2f}"
 
 def main():
-    st.set_page_config(page_title="Dashboard de Faturamento", layout="wide")
+
     
     st.markdown("""
     <style>
