@@ -207,7 +207,6 @@ def exibir_grafico_vendas_por_tempo(df, periodo_inicial, periodo_final):
     st.plotly_chart(fig, use_container_width=True, key=f"vendas_por_tempo_{periodo_inicial}_{periodo_final}")
 
 def main():
-    st.set_page_config(page_title="Desempenho de Vendas por Produto", layout="wide")
     
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
