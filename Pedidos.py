@@ -165,7 +165,6 @@ def auto_reload():
         st.rerun()  # Forçar reload da página
 
 def main():
-    st.set_page_config(page_title="Relatório de Pedidos", layout="wide")
     
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
