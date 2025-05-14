@@ -261,7 +261,7 @@ def main():
 
             sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
                 'CODPROD': 'CÓDIGO PRODUTO',
-                'NOME_PROD': 'NOME DO PRODUTO',
+                'NOME_PRODUTO': 'NOME DO PRODUTO',
                 'QT': 'QUANTIDADE VENDIDA',
                 'QT_ESTOQUE': 'ESTOQUE TOTAL'
             })
