@@ -113,9 +113,18 @@ def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, dat
     data_vwsomelier['DATA'] = pd.to_datetime(data_vwsomelier['DATA'], errors='coerce')
     data_vwsomelier['PVENDA'] = pd.to_numeric(data_vwsomelier['PVENDA'], errors='coerce').fillna(0).astype('float32')
     data_vwsomelier['QT'] = pd.to_numeric(data_vwsomelier['QT'], errors='coerce').fillna(0).astype('int32')
-    data_pcpedc['CODUSUR'] = data_pcpedc['CODUSUR'].astype(str)
-    data_pcpedc['CODCLIENTE'] = data_pcpedc['CODCLIENTE'].astype(str)
-    data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].astype(str)
+    data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].astype(str).str.strip()
+    data_pcpedc['CODUSUR'] = data_pcpedc['CODUSUR'].astype(str).str.strip()
+    data_pcpedc['CODCLIENTE'] = data_pcpedc['CODCLIENTE'].astype(str).str.strip()
+    data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].astype(str).str.strip()
+
+    # Handle float values or decimals
+    data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].str.replace(r'\.0$', '', regex=True)
+    data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].str.replace(r'\.0$', '', regex=True)
+
+    # Remove rows with null or empty NUMPED/PEDIDO
+    data_vwsomelier = data_vwsomelier[data_vwsomelier['NUMPED'].notna() & (data_vwsomelier['NUMPED'] != '')]
+    data_pcpedc = data_pcpedc[data_pcpedc['PEDIDO'].notna() & (data_pcpedc['PEDIDO'] != '')]
 
     # Filtrar os dados com base no período selecionado
     data_filtrada = data_vwsomelier[(data_vwsomelier['DATA'] >= data_inicial) & 
@@ -129,13 +138,25 @@ def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, dat
     if 'DTCANCEL' in data_filtrada.columns:
         data_filtrada = data_filtrada[data_filtrada['DTCANCEL'].isna()]
 
-    # Juntar com PCVENDEDOR para obter CODUSUR, VENDEDOR e CODCLIENTE
+    # Validar valores para merge
+    if data_filtrada['NUMPED'].isna().all() or data_pcpedc['PEDIDO'].isna().all():
+        st.warning("Nenhum valor válido em NUMPED ou PEDIDO para realizar a junção.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Log para debug
+    logger.info(f"Tipos de dados em data_vwsomelier: {data_vwsomelier[['NUMPED']].dtypes}")
+    logger.info(f"Tipos de dados em data_pcpedc: {data_pcpedc[['PEDIDO']].dtypes}")
+    logger.info(f"Amostra de NUMPED: {data_vwsomelier['NUMPED'].head().tolist()}")
+    logger.info(f"Amostra de PEDIDO: {data_pcpedc['PEDIDO'].head().tolist()}")
+
+    # Juntar com PCVENDEDOR
     data_filtrada = data_filtrada.merge(
         data_pcpedc[['PEDIDO', 'CODUSUR', 'VENDEDOR', 'CODCLIENTE']],
         left_on='NUMPED',
         right_on='PEDIDO',
         how='left'
     )
+    logger.info(f"Tamanho de data_filtrada após merge: {len(data_filtrada)}")
 
     if data_filtrada.empty:
         st.warning("Nenhum dado correspondente encontrado ao combinar VWSOMELIER e PCVENDEDOR.")
