@@ -596,7 +596,7 @@ def main():
                 gb.configure_column("PRODUTO", header_name="Produto", width=200, flex=1)
                 gb.configure_column("FORNECEDOR", header_name="Fornecedor", width=150, flex=1)
                 for supplier in ordered_suppliers:
-                    gb.configure_column(supplier, header_name=supplier, width=70, flex=0.5)
+                    gb.configure_column(supplier, header_name=supplier, width=200, flex=0.5)
                 
                 grid_options = gb.build()
                 
