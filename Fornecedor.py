@@ -19,14 +19,14 @@ def init_connection():
 supabase: Client = init_connection()
 
 # Buscar dados da tabela do Supabase com cache
-def get_data_from_supabase(data_inicial, data_final):
-    key = f"{data_inicial.strftime('%Y-%m-%d')}_{data_final.strftime('%Y-%m-%d')}"
-    if key not in cache:
+# Substitua a função get_data_from_supabase por esta versão
+def get_data_from_supabase():
+    if "all_data" not in cache:
         try:
             response = (
                 supabase.table("PCVENDEDOR2")
                 .select("*")
-                .limit(999999)
+                .limit(999999)  # garantir o máximo possível de linhas
                 .execute()
             )
             data = response.data
@@ -42,11 +42,12 @@ def get_data_from_supabase(data_inicial, data_final):
             df['ANO'] = df['DATA'].dt.year
             df['VALOR_TOTAL_ITEM'] = df['QT'] * df['PVENDA']
 
-            cache[key] = df
+            cache["all_data"] = df
         except Exception as e:
             st.error(f"Erro ao buscar dados do Supabase: {e}")
-            cache[key] = pd.DataFrame()
-    return cache[key]
+            cache["all_data"] = pd.DataFrame()
+    return cache["all_data"]
+
 
 def main():
     st.title("📊 Dashboard de Vendas (Supabase + Streamlit Cloud)")
