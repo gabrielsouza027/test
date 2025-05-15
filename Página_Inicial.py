@@ -1,5 +1,6 @@
 import streamlit as st
 import polars as pl
+import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import locale
@@ -154,6 +155,19 @@ def calcular_comparativos(data, hoje, mes_atual, ano_atual):
     pedidos_mes_anterior = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_anterior) & (pl.col('DATA_PEDIDO').dt.year() == ano_anterior))['NUMPED'].n_unique()
     return faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior
 
+def calcular_variacao(atual, anterior):
+    if anterior == 0:
+        return 0
+    return ((atual - anterior) / anterior) * 100
+
+def icone_variacao(variacao):
+    if variacao > 0:
+        return f"⬆ {variacao:.2f}%"
+    elif variacao < 0:
+        return f"⬇ {variacao:.2f}%"
+    else:
+        return "➖ 0%"
+
 def formatar_valor(valor):
     try:
         return locale.currency(valor, grouping=True, symbol=True)
@@ -240,8 +254,9 @@ def main():
 
     mes_atual = hoje.month
     ano_atual = hoje.year
-    faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior = calcular_comparativos(data_filtrada,руса
+    faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior = calcular_comparativos(data_filtrada, hoje, mes_atual, ano_atual)
 
+    # Calcular variações
     var_faturamento_mes = calcular_variacao(faturamento_mes_atual, faturamento_mes_anterior)
     var_pedidos_mes = calcular_variacao(pedidos_mes_atual, pedidos_mes_anterior)
     var_faturamento_hoje = calcular_variacao(faturamento_hoje, faturamento_ontem)
@@ -259,6 +274,9 @@ def main():
         )
         fig.update_layout(margin=dict(t=30, b=30, l=30, r=30))
         return fig
+
+    # Definir colunas para exibição
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.markdown(f"""
