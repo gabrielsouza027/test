@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 from cachetools import TTLCache
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
@@ -14,9 +14,14 @@ cache = TTLCache(maxsize=1, ttl=180)
 def init_connection():
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        st.error("As variáveis de ambiente SUPABASE_URL e SUPABASE_KEY devem estar configuradas.")
+        return None
     return create_client(url, key)
 
 supabase: Client = init_connection()
+if supabase is None:
+    st.stop()
 
 # Função para buscar todos os dados
 def get_all_data_from_supabase():
@@ -24,8 +29,9 @@ def get_all_data_from_supabase():
         try:
             all_data = []
             page_size = 1000
-            offset = 1
+            offset = 0  # Ajustado para começar do 0
 
+            st.info("Buscando dados do Supabase...")
             while True:
                 response = (
                     supabase.table("PCVENDEDOR2")
@@ -40,41 +46,53 @@ def get_all_data_from_supabase():
                 all_data.extend(data_page)
                 offset += page_size
 
+            if not all_data:
+                st.warning("Nenhum dado retornado do Supabase.")
+                return pd.DataFrame()
+
             df = pd.DataFrame(all_data)
 
             required_columns = ['DATA', 'QT', 'PVENDA', 'FORNECEDOR', 'VENDEDOR', 'CLIENTE', 'PRODUTO', 'CODPROD', 'CODIGOVENDEDOR', 'CODCLI']
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"Coluna '{col}' não encontrada")
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                st.error(f"Colunas ausentes no conjunto de dados: {missing_columns}")
+                return pd.DataFrame()
 
-            df['DATA'] = pd.to_datetime(df['DATA'])
+            # Converter DATA para datetime
+            df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
+            if df['DATA'].isna().any():
+                st.warning("Algumas datas não puderam ser convertidas e serão ignoradas.")
+                df = df.dropna(subset=['DATA'])
+
             df['MES'] = df['DATA'].dt.month
             df['ANO'] = df['DATA'].dt.year
             df['VALOR_TOTAL_ITEM'] = df['QT'] * df['PVENDA']
 
             cache["all_data"] = df
+            st.success(f"Dados carregados com sucesso: {len(df)} registros.")
         except Exception as e:
             st.error(f"Erro ao buscar dados do Supabase: {e}")
             cache["all_data"] = pd.DataFrame()
 
     return cache["all_data"]
 
-
 def main():
     st.title("📊 Dashboard de Vendas (Supabase + Streamlit Cloud)")
 
     # Definição do mês atual como padrão
     today = datetime.today()
-    data_inicial = datetime(today.year, today.month, 1)
-    data_final = datetime(today.year, today.month, today.day)
+    data_inicial_default = datetime(today.year, today.month, 1)
+    data_final_default = today
 
+    # Filtros de período
     st.subheader("Filtro de Período (Fornecedores)")
     col1, col2 = st.columns(2)
     with col1:
-        data_inicial = st.date_input("Data Inicial", value=data_inicial, key="data_inicial")
+        data_inicial = st.date_input("Data Inicial", value=data_inicial_default, key="data_inicial")
     with col2:
-        data_final = st.date_input("Data Final", value=data_final, key="data_final")
+        data_final = st.date_input("Data Final", value=data_final_default, key="data_final")
 
+    # Converter para datetime
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
     data_final = datetime.combine(data_final, datetime.max.time())
 
@@ -82,9 +100,19 @@ def main():
         st.error("A data inicial não pode ser maior que a data final.")
         return
 
+    # Carregar dados
     df = get_all_data_from_supabase()
     if df.empty:
-        st.warning("Nenhum dado encontrado para o período selecionado.")
+        st.warning("Nenhum dado disponível no Supabase. Verifique a conexão ou a tabela.")
+        return
+
+    # Filtrar dados pelo período
+    df_filtered = df[(df['DATA'] >= data_inicial) & (df['DATA'] <= data_final)]
+    if df_filtered.empty:
+        st.warning(f"Nenhum dado encontrado para o período de {data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}.")
+        st.write("Intervalo de datas disponível nos dados:")
+        st.write(f"Data mínima: {df['DATA'].min().strftime('%d/%m/%Y')}")
+        st.write(f"Data máxima: {df['DATA'].max().strftime('%d/%m/%Y')}")
         return
 
     # -------------------- TABELA 1 --------------------
@@ -98,9 +126,9 @@ def main():
     }
     all_month_cols = [f"{month_names[d.month]}-{d.year}" for d in all_months]
 
-    df['ANO'] = df['DATA'].dt.year
-    df['MES'] = df['DATA'].dt.month
-    df_grouped = df.groupby(['FORNECEDOR', 'ANO', 'MES'])['VALOR_TOTAL_ITEM'].sum().reset_index()
+    df_filtered['ANO'] = df_filtered['DATA'].dt.year
+    df_filtered['MES'] = df_filtered['DATA'].dt.month
+    df_grouped = df_filtered.groupby(['FORNECEDOR', 'ANO', 'MES'])['VALOR_TOTAL_ITEM'].sum().reset_index()
     df_grouped['MES_ANO'] = df_grouped.apply(lambda row: f"{month_names[row['MES']]}-{row['ANO']}", axis=1)
 
     pivot_df = df_grouped.pivot(index='FORNECEDOR', columns='MES_ANO', values='VALOR_TOTAL_ITEM').fillna(0)
@@ -120,7 +148,7 @@ def main():
         st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
     else:
         gb = GridOptionsBuilder.from_dataframe(pivot_df)
-        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=500, flex=1)
+        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=100, flex=1)
         gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", flex=2)
 
         for col in pivot_df.columns:
@@ -151,8 +179,8 @@ def main():
     st.subheader("Quantidade Vendida por Produto por Mês")
 
     df_filtered_range = df[df['ANO'] >= 2024]
-    anos = list(range(2024, datetime.today().year + 1))
-    meses = sorted(df_filtered_range['MES'].unique())
+    anos = sorted(df_filtered_range['ANO'].unique())
+    meses = sorted(df_filtered a'sMES'].unique())
     meses_nomes = [month_names[m] for m in meses]
 
     current_year = today.year
@@ -161,9 +189,9 @@ def main():
 
     col1, col2 = st.columns(2)
     with col1:
-        selected_ano = st.selectbox("Selecione o Ano", anos, index=anos.index(current_year), key="ano_produto")
+        selected_ano = st.selectbox("Selecione o Ano", anos, index=anos.index(current_year) if current_year in anos else 0, key="ano_produto")
     with col2:
-        selected_mes = st.selectbox("Selecione o Mês", meses_nomes, index=meses_nomes.index(current_month_name), key="mes_produto")
+        selected_mes = st.selectbox("Selecione o Mês", meses_nomes, index=meses_nomes.index(current_month_name) if current_month_name in meses_nomes else 0, key="mes_produto")
 
     selected_mes_num = list(month_names.keys())[list(month_names.values()).index(selected_mes)]
     df_filtered = df_filtered_range[(df_filtered_range['MES'] == selected_mes_num) & (df_filtered_range['ANO'] == selected_ano)]
@@ -201,7 +229,7 @@ def main():
         csv_produtos = pivot_produtos.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
         st.download_button("Download CSV - Produtos", data=csv_produtos, file_name="produtos.csv", mime="text/csv")
     else:
-        st.warning("Nenhum dado encontrado para o mês e ano selecionados.")
+        st.warning(f"Nenhum dado encontrado para {selected_mes}-{selected_ano}.")
 
 if __name__ == "__main__":
     main()
