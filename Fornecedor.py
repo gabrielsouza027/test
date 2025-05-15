@@ -227,84 +227,84 @@ def main():
     if not df.is_empty():
         # --- Primeira Tabela: Valor Total por Fornecedor por Mês ---
         # --- Primeira Tabela: Valor Total por Fornecedor por Mês ---
-st.subheader("Valor Total por Fornecedor por Mês")
-
-# Barra de Pesquisa
-search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
-
-# Agrupar por fornecedor, ano e mês
-df_grouped = df.group_by(['FORNECEDOR', 'MES', 'ANO']).agg(
-    VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
-).sort(['FORNECEDOR', 'ANO', 'MES'])
-
-# Pivot table
-pivot_df = df_grouped.pivot(
-    values='VALOR_TOTAL_ITEM',
-    index='FORNECEDOR',
-    columns=['ANO', 'MES'],
-    aggregate_function='sum'
-).fill_null(0)
-
-# Log pivot columns for debugging
-logger.info(f"Pivot table columns: {pivot_df.columns}")
-
-# Renomear colunas
-month_names = {
-    1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr',
-    5: 'Mai', 6: 'Jun', 7: 'Jul', 8: 'Ago',
-    9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
-}
-
-# Criar nomes de colunas únicos
-new_columns = ['FORNECEDOR']
-seen_columns = set(['FORNECEDOR'])
-for col in pivot_df.columns[1:]:
-    try:
-        year, month = col  # Desestruturar tupla (ANO, MES)
-        month = int(month)  # Garantir que o mês é um inteiro
-        month_name = month_names.get(month, f"Mês{month}")
-        col_name = f"{month_name}-{year}"
-        # Evitar duplicatas
-        if col_name in seen_columns:
-            i = 1
-            base_name = col_name
-            while f"{base_name}_{i}" in seen_columns:
-                i += 1
-            col_name = f"{base_name}_{i}"
-        new_columns.append(col_name)
-        seen_columns.add(col_name)
-    except (ValueError, TypeError) as e:
-        logger.error(f"Erro ao processar coluna {col}: {e}")
-        st.error(f"Erro ao processar colunas do pivot: {col}. Verifique os dados de ANO e MES.")
-        return
-
-# Validar que não há duplicatas
-if len(new_columns) != len(set(new_columns)):
-    logger.error(f"Colunas duplicadas detectadas: {new_columns}")
-    st.error("Erro: Colunas duplicadas no pivot. Verifique os dados de ANO e MES.")
-    return
-
-# Atribuir novos nomes de colunas
-try:
-    pivot_df.columns = new_columns
-except Exception as e:
-    logger.error(f"Erro ao renomear colunas: {e}\n{traceback.format_exc()}")
-    st.error(f"Erro ao renomear colunas: {e}")
-    return
-
-# Adicionar coluna de total
-pivot_df = pivot_df.with_columns(
-    Total=pl.sum_horizontal(pl.col(col) for col in pivot_df.columns if col != 'FORNECEDOR')
-)
-
-# Filtrar fornecedores com base na busca
-if search_term:
-    pivot_df = pivot_df.filter(
-        pl.col('FORNECEDOR').str.contains(search_term, case=False)
-    )
-
-# Converter para Pandas para AgGrid
-pivot_df_pandas = pivot_df.to_pandas()
+        st.subheader("Valor Total por Fornecedor por Mês")
+        
+        # Barra de Pesquisa
+        search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
+        
+        # Agrupar por fornecedor, ano e mês
+        df_grouped = df.group_by(['FORNECEDOR', 'MES', 'ANO']).agg(
+            VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
+        ).sort(['FORNECEDOR', 'ANO', 'MES'])
+        
+        # Pivot table
+        pivot_df = df_grouped.pivot(
+            values='VALOR_TOTAL_ITEM',
+            index='FORNECEDOR',
+            columns=['ANO', 'MES'],
+            aggregate_function='sum'
+        ).fill_null(0)
+        
+        # Log pivot columns for debugging
+        logger.info(f"Pivot table columns: {pivot_df.columns}")
+        
+        # Renomear colunas
+        month_names = {
+            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr',
+            5: 'Mai', 6: 'Jun', 7: 'Jul', 8: 'Ago',
+            9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
+        }
+        
+        # Criar nomes de colunas únicos
+        new_columns = ['FORNECEDOR']
+        seen_columns = set(['FORNECEDOR'])
+        for col in pivot_df.columns[1:]:
+            try:
+                year, month = col  # Desestruturar tupla (ANO, MES)
+                month = int(month)  # Garantir que o mês é um inteiro
+                month_name = month_names.get(month, f"Mês{month}")
+                col_name = f"{month_name}-{year}"
+                # Evitar duplicatas
+                if col_name in seen_columns:
+                    i = 1
+                    base_name = col_name
+                    while f"{base_name}_{i}" in seen_columns:
+                        i += 1
+                    col_name = f"{base_name}_{i}"
+                new_columns.append(col_name)
+                seen_columns.add(col_name)
+            except (ValueError, TypeError) as e:
+                logger.error(f"Erro ao processar coluna {col}: {e}")
+                st.error(f"Erro ao processar colunas do pivot: {col}. Verifique os dados de ANO e MES.")
+                return
+        
+        # Validar que não há duplicatas
+        if len(new_columns) != len(set(new_columns)):
+            logger.error(f"Colunas duplicadas detectadas: {new_columns}")
+            st.error("Erro: Colunas duplicadas no pivot. Verifique os dados de ANO e MES.")
+            return
+        
+        # Atribuir novos nomes de colunas
+        try:
+            pivot_df.columns = new_columns
+        except Exception as e:
+            logger.error(f"Erro ao renomear colunas: {e}\n{traceback.format_exc()}")
+            st.error(f"Erro ao renomear colunas: {e}")
+            return
+        
+        # Adicionar coluna de total
+        pivot_df = pivot_df.with_columns(
+            Total=pl.sum_horizontal(pl.col(col) for col in pivot_df.columns if col != 'FORNECEDOR')
+        )
+        
+        # Filtrar fornecedores com base na busca
+        if search_term:
+            pivot_df = pivot_df.filter(
+                pl.col('FORNECEDOR').str.contains(search_term, case=False)
+            )
+        
+        # Converter para Pandas para AgGrid
+        pivot_df_pandas = pivot_df.to_pandas()
         
         # Verificar se há resultados
         if pivot_df.is_empty():
