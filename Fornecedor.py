@@ -83,24 +83,22 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         raise
 
 # Função para buscar todas as páginas assincronamente
-async def fetch_all_pages(table, limit=50000, max_pages=10000, filter_query=None):
+async def fetch_all_pages(table, limit=10000, max_pages=1000, filter_query=None):
     all_data = []
     async with aiohttp.ClientSession() as session:
-        tasks = []
         for offset in range(0, limit * max_pages, limit):
-            tasks.append(fetch_supabase_page_async(session, table, offset, limit, filter_query))
-        
-        for future in asyncio.as_completed(tasks):
             try:
-                data = await future
-                if data:
-                    all_data.extend(data)
-                else:
+                data = await fetch_supabase_page_async(session, table, offset, limit, filter_query)
+                if not data:
+                    logger.info(f"No more data at offset {offset}. Stopping pagination.")
                     break
+                all_data.extend(data)
+                await asyncio.sleep(0.5)  # Delay de 500ms para evitar rate limits
             except Exception as e:
-                logger.error(f"Erro em uma requisição para {table}: {str(e)}")
+                logger.error(f"Erro em uma requisição para {table} at offset {offset}: {str(e)}")
                 continue
     
+    logger.info(f"Total records fetched: {len(all_data)}")
     return all_data
 
 # Função para buscar dados do Supabase com cache e Polars
@@ -117,9 +115,13 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
     date_column = config["date_column"]
 
     try:
-        # Fetch all data without date filter in Supabase
-        logger.info("Buscando todos os dados da tabela sem filtro de data no Supabase.")
-        all_data = asyncio.run(fetch_all_pages(table, limit=50000, max_pages=10000, filter_query=None))
+        # Aplicar filtro de data no Supabase
+        date_filter = (
+            f"{date_column}.gte.{data_inicial.strftime('%Y-%m-%d')}"
+            f"&{date_column}.lte.{data_final.strftime('%Y-%m-%d')}"
+        )
+        logger.info(f"Fetching data with date filter: {date_filter}")
+        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=1000, filter_query=date_filter))
 
         if all_data:
             df = pl.DataFrame(all_data)
@@ -134,26 +136,20 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
 
             # Garantir tipos de dados
             df = df.with_columns([
-                # Convert DATA from text to date
                 pl.col('DATA').str.to_date(format="%Y-%m-%d", strict=False).alias('DATA'),
                 pl.col('QT').cast(pl.Float64, strict=False).fill_null(0),
                 pl.col('PVENDA').cast(pl.Float64, strict=False).fill_null(0)
             ])
 
-            # Filter out rows where DATA conversion failed
+            # Filtrar linhas onde a conversão de DATA falhou
             df = df.filter(pl.col('DATA').is_not_null())
-
-            # Apply date range filter in Polars
-            df = df.filter(
-                (pl.col('DATA') >= data_inicial.date()) & (pl.col('DATA') <= data_final.date())
-            )
 
             # Validar dados
             if df['QT'].lt(0).any():
                 logger.warning("Quantidades negativas encontradas em 'QT'. Substituindo por 0.")
                 df = df.with_columns(pl.col('QT').clip(min=0))
             if df['PVENDA'].lt(0).any():
-                logger.warning("Preços negativas encontradas em 'PVENDA'. Substituindo por 0.")
+                logger.warning("Preços negativos encontrados em 'PVENDA'. Substituindo por 0.")
                 df = df.with_columns(pl.col('PVENDA').clip(min=0))
 
             # Calcular valor total e extrair mês/ano
@@ -175,7 +171,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             df = pl.DataFrame()
 
     except Exception as e:
-        logger.error(f"Erro ao buscar dados da tabela {table}: {str(e)}")
+        logger.error(f"Erro ao buscar dados da tabela {table}: {str(e)}\n{traceback.format_exc()}")
         st.error(f"Erro ao buscar dados: {str(e)}")
         _cache[key] = pl.DataFrame()
         df = pl.DataFrame()
