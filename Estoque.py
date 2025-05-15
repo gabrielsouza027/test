@@ -10,6 +10,10 @@ import logging
 import asyncio
 import aiohttp
 from tenacity import retry, stop_after_attempt, wait_exponential
+import nest_asyncio
+
+# Aplicar nest_asyncio para permitir loops aninhados no Streamlit
+nest_asyncio.apply()
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -71,12 +75,15 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
             url += f"&{filter_query}"
         
         async with session.get(url, headers=headers, timeout=30) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                content = await response.text()
+                logger.error(f"Erro HTTP {response.status} ao buscar {table}: {content}")
+                raise Exception(f"HTTP {response.status}: {content}")
             data = await response.json()
             logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
             return data
     except Exception as e:
-        logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
+        logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {str(e)}")
         raise
 
 # Função para buscar todas as páginas de uma tabela assincronamente
@@ -95,7 +102,7 @@ async def fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=None)
                 else:
                     break
             except Exception as e:
-                logger.error(f"Erro em uma requisição: {e}")
+                logger.error(f"Erro em uma requisição para {table}: {str(e)}")
                 continue
     
     return all_data
@@ -116,10 +123,7 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
             filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
 
         # Executar busca assíncrona
-        loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else asyncio.new_event_loop()
-        all_data = loop.run_until_complete(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=filter_query))
-        if loop and not loop.is_running():
-            loop.close()
+        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=filter_query))
 
         if all_data:
             # Converter para Polars DataFrame
@@ -147,8 +151,8 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
             df = pl.DataFrame()
 
     except Exception as e:
-        logger.error(f"Erro ao buscar dados da tabela {table}: {e}")
-        st.error(f"Erro ao buscar dados da tabela {table}: {e}")
+        logger.error(f"Erro ao buscar dados da tabela {table}: {str(e)}")
+        st.error(f"Erro ao buscar dados da tabela {table}: {str(e)}")
         _cache[key] = pl.DataFrame()
         df = pl.DataFrame()
 
@@ -277,7 +281,7 @@ def main():
         if pesquisar:
             df = df.filter(
                 pl.col('Código do Produto').cast(pl.Utf8).str.contains(pesquisar, case=False) |
-                pl.col('Nome do Produto').str.contains(pesquirar, case=False)
+                pl.col('Nome do Produto').str.contains(pesquisar, case=False)
             )
 
         df = df.with_columns(
@@ -295,10 +299,10 @@ def main():
 
         # Formatar números e datas em Polars antes de converter para Pandas
         df = df.with_columns([
-            pl.col(col).cast(pl.Int64).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8).alias(col)
+            pl.col(col).cast(pl.Int64, strict=False).fill_null(0).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8).alias(col)
             for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']
         ]).with_columns([
-            pl.col(col).cast(pl.Date).map_elements(lambda x: x.strftime('%Y-%m-%d') if x is not None else "", return_dtype=pl.Utf8).alias(col)
+            pl.col(col).cast(pl.Date, strict=False).map_elements(lambda x: x.strftime('%Y-%m-%d') if x is not None else "", return_dtype=pl.Utf8).alias(col)
             for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']
         ])
 
@@ -359,8 +363,8 @@ def main():
 
             # Formatar números em Polars
             sem_estoque_df = sem_estoque_df.with_columns([
-                pl.col('QUANTIDADE VENDIDA').cast(pl.Int64).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8),
-                pl.col('ESTOQUE TOTAL').cast(pl.Int64).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8)
+                pl.col('QUANTIDADE VENDIDA').cast(pl.Int64, strict=False).fill_null(0).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8),
+                pl.col('ESTOQUE TOTAL').cast(pl.Int64, strict=False).fill_null(0).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8)
             ])
 
             # Converter para Pandas para AgGrid
