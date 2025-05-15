@@ -1,19 +1,19 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from supabase import create_client, Client
-import datetime
 from cachetools import TTLCache
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-import time
+import concurrent.futures
+from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuração dos caches (TTL de 60 segundos)
-cache_vendas = TTLCache(maxsize=1, ttl=60)
-cache_estoque = TTLCache(maxsize=1, ttl=60)
+# Configuração do cache (TTL de 300 segundos para sincronizar com atualizações)
+cache = TTLCache(maxsize=1, ttl=300)
 
 # Configuração do Supabase usando secrets do Streamlit Cloud
 try:
@@ -35,47 +35,77 @@ except Exception as e:
     st.error(f"Erro ao inicializar o cliente Supabase: {e}")
     st.stop()
 
-# Configuração das tabelas e colunas esperadas
+# Configuração da tabela e colunas esperadas
 SUPABASE_CONFIG = {
     "vendas": {
-        "table": "VWSOMELIER",
-        "columns": ["id", "DESCRICAO_1", "DESCRICAO_2", "CODPROD", "DATA", "QT", "PVENDA", 
-                    "VLCUSTOFIN", "CONDVENDA", "NUMPED", "CODOPER", "DTCANCEL"]
-    },
-    "estoque": {
-        "table": "ESTOQUE",
-        "columns": ["id", "QTULTENT", "DTULTENT", "DTULTSAIDA", "CODFILIAL", "CODPROD", 
-                    "QT_ESTOQUE", "QTRESERV", "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"]
+        "table": "PCVENDEDOR2",
+        "columns": ["DATA", "QT", "PVENDA", "FORNECEDOR", "VENDEDOR", "CLIENTE", "PRODUTO", "CODPROD", "CODIGOVENDEDOR", "CODCLI"],
+        "date_column": "DATA",
+        "filial_filter": "CODFILIAL=in.('1','2')"
     }
-    # Adicione mais tabelas aqui, se necessário
-    # "outra_tabela": {
-    #     "table": "NOME_DA_TABELA",
-    #     "columns": ["COLUNA1", "COLUNA2", ...]
-    # }
 }
 
-# Função para buscar dados do Supabase com paginação
-@st.cache_data(show_spinner=False, ttl=60)
-def fetch_supabase_data(_cache, table, columns_expected):
-    key = f"{table}"
+# Função para buscar página do Supabase com retry
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def fetch_supabase_page(table, offset, limit, filter_query=None):
+    try:
+        query = supabase.table(table).select("*")
+        if filter_query:
+            query = query.filter(filter_query)
+        response = query.range(offset, offset + limit - 1).execute()
+        data = response.data
+        logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
+        return data
+    except Exception as e:
+        logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
+        raise
+
+# Função para buscar dados do Supabase com cache, paginação e paralelismo
+@st.cache_data(show_spinner=False, ttl=300)
+def get_data_from_supabase(_cache, data_inicial, data_final):
+    key = f"{data_inicial.strftime('%Y-%m-%d')}_{data_final.strftime('%Y-%m-%d')}"
     if key in _cache:
-        logger.info(f"Dados da tabela {table} recuperados do cache")
+        logger.info(f"Dados recuperados do cache para {key}")
         return _cache[key]
+
+    config = SUPABASE_CONFIG["vendas"]
+    table = config["table"]
+    columns_expected = config["columns"]
+    date_column = config["date_column"]
+    filial_filter = config["filial_filter"]
 
     try:
         all_data = []
-        offset = 0
-        limit = 1000000  # Limite por página do Supabase
+        limit = 50000  # Tamanho do lote aumentado
+        max_pages = 20  # Limite ajustável
 
-        while True:
-            response = supabase.table(table).select("*").range(offset, offset + limit - 1).execute()
-            data = response.data
-            if not data:
-                logger.info(f"Finalizada a recuperação de dados da tabela {table}")
-                break
-            all_data.extend(data)
-            offset += limit
-            logger.info(f"Recuperados {len(data)} registros da tabela {table}, total até agora: {len(all_data)}")
+        # Construir filtro de data e filial
+        data_inicial_str = data_inicial.strftime('%Y-%m-%d')
+        data_final_str = data_final.strftime('%Y-%m-%d')
+        filter_query = (
+            f"{filial_filter}&{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
+        )
+
+        # Buscar dados em paralelo
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            offset = 0
+            for _ in range(max_pages):
+                futures.append(executor.submit(fetch_supabase_page, table, offset, limit, filter_query))
+                offset += limit
+                if offset >= limit * max_pages:
+                    break
+
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    data = future.result()
+                    if data:
+                        all_data.extend(data)
+                    else:
+                        break
+                except Exception as e:
+                    logger.error(f"Erro em uma requisição: {e}")
+                    continue
 
         if all_data:
             df = pd.DataFrame(all_data)
@@ -85,225 +115,316 @@ def fetch_supabase_data(_cache, table, columns_expected):
                 st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
                 _cache[key] = pd.DataFrame()
                 return pd.DataFrame()
+
+            # Converter DATA para datetime e extrair mês e ano
+            df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
+            df = df.dropna(subset=['DATA'])
+            df['MES'] = df['DATA'].dt.month
+            df['ANO'] = df['DATA'].dt.year
+
+            # Garantir tipos numéricos
+            df['QT'] = pd.to_numeric(df['QT'], errors='coerce').fillna(0)
+            df['PVENDA'] = pd.to_numeric(df['PVENDA'], errors='coerce').fillna(0)
+
+            # Calcular valor total
+            df['VALOR_TOTAL_ITEM'] = df['QT'] * df['PVENDA']
+
             _cache[key] = df
-            logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
+            logger.info(f"Dados carregados com sucesso: {len(df)} registros")
         else:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
-            st.warning(f"Nenhum dado retornado da tabela {table}.")
+            st.warning(f"Nenhum dado retornado da tabela {table} para o período selecionado.")
             _cache[key] = pd.DataFrame()
             df = pd.DataFrame()
 
     except Exception as e:
         logger.error(f"Erro ao buscar dados da tabela {table}: {e}")
-        st.error(f"Erro ao buscar dados da tabela {table}: {e}")
+        st.error(f"Erro ao buscar dados: {e}")
         _cache[key] = pd.DataFrame()
         df = pd.DataFrame()
 
     return _cache[key]
 
-# Função para buscar dados de vendas (VWSOMELIER)
-def fetch_vendas_data():
-    config = SUPABASE_CONFIG["vendas"]
-    df = fetch_supabase_data(cache_vendas, config["table"], config["columns"])
-    if not df.empty:
-        for col in ['QT', 'PVENDA', 'VLCUSTOFIN', 'CONDVENDA', 'NUMPED']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
-        df['DTCANCEL'] = pd.to_datetime(df['DTCANCEL'], errors='coerce')
-        # Filtrar vendas não canceladas
-        df = df[df['DTCANCEL'].isna()]
-    return df
-
-# Função para buscar dados de estoque (ESTOQUE)
-def fetch_estoque_data():
-    config = SUPABASE_CONFIG["estoque"]
-    df = fetch_supabase_data(cache_estoque, config["table"], config["columns"])
-    if not df.empty:
-        for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCOMPRA']:
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-    return df
-
-# Função para realizar o reload automático a cada 1 minuto
+# Função para realizar o reload automático a cada 30 segundos
 def auto_reload():
     if 'last_reload' not in st.session_state:
         st.session_state.last_reload = time.time()
     
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 60:  # 60 segundos
+    if current_time - st.session_state.last_reload >= 30:  # 30 segundos
         st.session_state.last_reload = current_time
         st.cache_data.clear()  # Limpar o cache para forçar nova busca
         st.rerun()  # Forçar reload da página
 
-# Função principal
 def main():
-    st.title("📦 Análise de Estoque e Vendas")
-    st.markdown("Análise dos produtos vendidos e estoque disponível.")
-
-    # Chamar auto_reload para verificar se precisa atualizar
+    st.title("Dashboard de Vendas")
+    
+    # Chamar auto_reload para atualizações frequentes
     auto_reload()
 
-    # Definir o período de análise (ex.: últimos 60 dias)
-    data_final = datetime.date.today()  # 13/05/2025
-    data_inicial = data_final - datetime.timedelta(days=60)  # 14/03/2025
-
-    # Buscar dados de vendas (VWSOMELIER)
-    with st.spinner("Carregando dados de vendas..."):
-        vendas_df = fetch_vendas_data()
-
-    if vendas_df.empty:
-        st.warning("Não há vendas disponíveis para o período selecionado.")
-    else:
-        # Filtrar vendas do período selecionado
-        vendas_df = vendas_df[(vendas_df['DATA'] >= pd.to_datetime(data_inicial)) & 
-                              (vendas_df['DATA'] <= pd.to_datetime(data_final))]
-        # Agrupar as vendas por produto e somar as quantidades vendidas
-        vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
-
-    # Buscar dados de estoque (ESTOQUE)
-    with st.spinner("Carregando dados de estoque..."):
-        estoque_df = fetch_estoque_data()
-
-    if estoque_df.empty:
-        st.warning("Não há dados de estoque disponíveis.")
-    else:
-        # Verificar se os produtos com vendas estão sem estoque
-        merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], 
-                            on='CODPROD', how='left')
-
-        # Filtrando os produtos que NÃO possuem estoque
-        sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
-
-        # Barra de pesquisa para código do produto ou nome
-        pesquisar = st.text_input("Pesquisar por Código do Produto ou Nome", "")
-
-        # Renomear as colunas
-        df = estoque_df.copy()
-        df = df.rename(columns={
-            'CODPROD': 'Código do Produto',
-            'NOME_PRODUTO': 'Nome do Produto',
-            'QTULTENT': 'Quantidade Última Entrada',
-            'QT_ESTOQUE': 'Estoque Disponível',
-            'QTRESERV': 'Quantidade Reservada',
-            'QTINDENIZ': 'Quantidade Avariada',
-            'DTULTENT': 'Data Última Entrada',
-            'DTULTSAIDA': 'Data Última Saída',
-            'CODFILIAL': 'Código da Filial',
-            'DTULTPEDCOMPRA': 'Data Último Pedido Compra',
-            'BLOQUEADA': 'Quantidade Bloqueada'
-        })
-
-        if pesquisar:
-            df = df[
-                (df['Código do Produto'].astype(str).str.contains(pesquisar, case=False, na=False)) |
-                (df['Nome do Produto'].str.contains(pesquisar, case=False, na=False))
-            ]
-
-        df['Quantidade Total'] = df[['Estoque Disponível', 'Quantidade Reservada', 
-                                    'Quantidade Bloqueada']].fillna(0).sum(axis=1)
-
-        # Reordenar as colunas
-        df = df.reindex(columns=[
-            'Código da Filial', 'Código do Produto', 'Nome do Produto', 'Estoque Disponível', 
-            'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 
-            'Quantidade Total', 'Quantidade Última Entrada', 'Data Última Entrada', 
-            'Data Última Saída', 'Data Último Pedido Compra'
-        ])
-
-        # Configurar a tabela de estoque com AgGrid e larguras fixas
-        st.subheader("✅ Estoque")
-        st.markdown("Use a barra de rolagem para ver mais linhas.")
-        gb = GridOptionsBuilder.from_dataframe(df)
-        gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=False)
-        gb.configure_column("Código da Filial", width=100)
-        gb.configure_column("Código do Produto", width=120)
-        gb.configure_column("Nome do Produto", width=250)
-        gb.configure_column("Estoque Disponível", width=120)
-        gb.configure_column("Quantidade Reservada", width=120)
-        gb.configure_column("Quantidade Bloqueada", width=120)
-        gb.configure_column("Quantidade Avariada", width=120)
-        gb.configure_column("Quantidade Total", width=120)
-        gb.configure_column("Quantidade Última Entrada", width=120)
-        gb.configure_column("Data Última Entrada", width=130)
-        gb.configure_column("Data Última Saída", width=130)
-        gb.configure_column("Data Último Pedido Compra", width=130)
-        gb.configure_pagination(enabled=False)
-        gb.configure_grid_options(domLayout='normal')
-        grid_options = gb.build()
-
-        # Formatar números e datas para exibição
-        df_display = df.copy()
-        for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 
-                    'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
-            df_display[col] = df_display[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
-        for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']:
-            df_display[col] = df_display[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else "")
-
-        AgGrid(
-            df_display,
-            gridOptions=grid_options,
-            update_mode=GridUpdateMode.NO_UPDATE,
-            allow_unsafe_jscode=True,
-            height=400,
-            theme='streamlit',
-            fit_columns_on_grid_load=False
+    # Filtro de Data para Tabela 1
+    st.subheader("Filtro de Período (Fornecedores)")
+    today = datetime.today()
+    col1, col2 = st.columns(2)
+    with col1:
+        data_inicial = st.date_input(
+            "Data Inicial",
+            value=datetime(today.year - 1, 1, 1),  # Um ano antes do dia atual
+            key="data_inicial"
         )
+    with col2:
+        data_final = st.date_input(
+            "Data Final",
+            value=today,  # Dia atual
+            key="data_final"
+        )
+    
+    # Converter para datetime
+    data_inicial = datetime.combine(data_inicial, datetime.min.time())
+    data_final = datetime.combine(data_final, datetime.max.time())
+    
+    if data_inicial > data_final:
+        st.error("A data inicial não pode ser maior que a data final.")
+        return
 
-        if sem_estoque_df.empty:
-            st.info("Não há produtos vendidos sem estoque.")
-        else:
-            # Exibir a tabela com os produtos sem estoque mas vendidos
-            st.subheader("❌ Produtos Sem Estoque com Vendas")
-
-            sem_estoque_df_renomeado = sem_estoque_df[sem_estoque_df['QT_ESTOQUE'].isna() | 
-                                                     (sem_estoque_df['QT_ESTOQUE'] <= 0)]
-
-            sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
-                'CODPROD': 'CÓDIGO PRODUTO',
-                'NOME_PRODUTO': 'NOME DO PRODUTO',
-                'QT': 'QUANTIDADE VENDIDA',
-                'QT_ESTOQUE': 'ESTOQUE TOTAL'
-            })
-
-            sem_estoque_df_renomeado = sem_estoque_df_renomeado[
-                sem_estoque_df_renomeado['NOME_DO_PRODUTO'].notna() & 
-                (sem_estoque_df_renomeado['NOME_DO_PRODUTO'] != '')
+    # Buscar dados do Supabase
+    with st.spinner("Carregando dados do Supabase..."):
+        df = get_data_from_supabase(cache, data_inicial, data_final)
+    
+    if not df.empty:
+        # --- Primeira Tabela: Valor Total por Fornecedor por Mês ---
+        st.subheader("Valor Total por Fornecedor por Mês")
+        
+        # Barra de Pesquisa
+        search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
+        
+        # Agrupar por fornecedor, ano e mês
+        df_grouped = df.groupby(['FORNECEDOR', 'MES', 'ANO'])['VALOR_TOTAL_ITEM'].sum().reset_index()
+        
+        # Pivot table para fornecedores como linhas e meses como colunas
+        pivot_df = df_grouped.pivot_table(
+            values='VALOR_TOTAL_ITEM',
+            index='FORNECEDOR',
+            columns=['ANO', 'MES'],
+            aggfunc='sum',
+            fill_value=0
+        )
+        
+        # Renomear colunas para incluir ano e nome do mês
+        month_names = {
+            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr',
+            5: 'Mai', 6: 'Jun', 7: 'Jul', 8: 'Ago',
+            9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
+        }
+        new_columns = [
+            f"{month_names[month]}-{year}" 
+            for year, month in pivot_df.columns
+        ]
+        pivot_df.columns = new_columns
+        
+        # Adicionar coluna de total
+        pivot_df['Total'] = pivot_df.sum(axis=1)
+        
+        # Resetar índice para tornar FORNECEDOR uma coluna
+        pivot_df = pivot_df.reset_index()
+        
+        # Filtrar fornecedores com base na busca
+        if search_term:
+            pivot_df = pivot_df[
+                pivot_df['FORNECEDOR'].str.contains(search_term, case=False, na=False)
             ]
-
-            sem_estoque_df_renomeado = sem_estoque_df_renomeado[[
-                'CÓDIGO PRODUTO', 'NOME DO PRODUTO', 'QUANTIDADE VENDIDA', 'ESTOQUE TOTAL'
-            ]]
-
-            gb = GridOptionsBuilder.from_dataframe(sem_estoque_df_renomeado)
-            gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=False)
-            gb.configure_column("CÓDIGO PRODUTO", width=150)
-            gb.configure_column("NOME DO PRODUTO", width=300)
-            gb.configure_column("QUANTIDADE VENDIDA", width=200)
-            gb.configure_column("ESTOQUE TOTAL", width=200)
-            gb.configure_pagination(enabled=False)
-            gb.configure_grid_options(domLayout='normal')
-            grid_options = gb.build()
-
-            df_sem_estoque_display = sem_estoque_df_renomeado.copy()
-            df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(
-                df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
-            df_sem_estoque_display['ESTOQUE TOTAL'] = pd.to_numeric(
-                df_sem_estoque_display['ESTOQUE TOTAL'], errors='coerce').fillna(0)
-            df_sem_estoque_display['QUANTIDADE VENDIDA'] = df_sem_estoque_display['QUANTIDADE VENDIDA'].apply(
-                lambda x: f"{x:,.0f}")
-            df_sem_estoque_display['ESTOQUE TOTAL'] = df_sem_estoque_display['ESTOQUE TOTAL'].apply(
-                lambda x: f"{x:,.0f}")
-
-            AgGrid(
-                df_sem_estoque_display,
-                gridOptions=grid_options,
-                update_mode=GridUpdateMode.NO_UPDATE,
-                allow_unsafe_jscode=True,
-                height=300,
-                theme='streamlit',
-                fit_columns_on_grid_load=True
+        
+        # Verificar se há resultados após o filtro
+        if pivot_df.empty:
+            st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
+        else:
+            # Configurar opções do AgGrid
+            gb = GridOptionsBuilder.from_dataframe(pivot_df)
+            gb.configure_default_column(
+                sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
             )
+            gb.configure_column(
+                "FORNECEDOR",
+                headerName="Fornecedor",
+                pinned="left",
+                width=300,
+                filter="agTextColumnFilter"
+            )
+            for col in pivot_df.columns:
+                if col != "FORNECEDOR":
+                    gb.configure_column(
+                        col,
+                        headerName=col,
+                        type=["numericColumn"],
+                        valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
+                        cellRenderer="agAnimateShowChangeCellRenderer",
+                        width=110
+                    )
+            
+            # Habilitar linha de totais
+            gb.configure_grid_options(
+                enableRangeSelection=True,
+                statusBar={
+                    "statusPanels": [
+                        {"statusPanel": "agTotalRowCountComponent"},
+                        {"statusPanel": "agFilteredRowCountComponent"},
+                        {"statusPanel": "agAggregationComponent"}
+                    ]
+                }
+            )
+            
+            # Renderizar AgGrid
+            AgGrid(
+                pivot_df,
+                gridOptions=gb.build(),
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                height=400,
+                allow_unsafe_jscode=True,
+                theme="streamlit"
+            )
+            
+            # Download CSV
+            csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
+            st.download_button(
+                label="Download CSV - Fornecedores",
+                data=csv,
+                file_name=f'valor_vendas_por_fornecedor_{data_inicial.year}_ate_{data_final.strftime("%Y%m%d")}.csv',
+                mime='text/csv',
+            )
+        
+        # --- Segunda Tabela: Quantidade Vendida por Produto por Mês ---
+        st.markdown("---")
+        st.subheader("Quantidade Vendida por Produto por Mês")
+        
+        # Filtro de Ano e Mês
+        anos = sorted(df['ANO'].unique())
+        meses = sorted(df['MES'].unique())
+        meses_nomes = [month_names[m] for m in meses]
+        
+        # Definir padrões para ano e mês (atual)
+        current_year = today.year
+        current_month = today.month
+        current_month_name = month_names[current_month]
+        
+        # Seletor de Ano e Mês
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_ano = st.selectbox("Selecione o Ano", anos, index=anos.index(current_year) if current_year in anos else 0, key="ano_produto")
+        with col2:
+            selected_mes = st.selectbox("Selecione o Mês", meses_nomes, index=meses_nomes.index(current_month_name) if current_month_name in meses_nomes else 0, key="mes_produto")
+        
+        # Converter nome do mês de volta para número
+        selected_mes_num = list(month_names.keys())[list(month_names.values()).index(selected_mes)]
+        
+        # Filtrar os dados com base no ano e mês selecionados
+        df_filtered = df[
+            (df['MES'] == selected_mes_num) & (df['ANO'] == selected_ano)
+        ]
+        
+        if not df_filtered.empty:
+            # Agrupar por colunas otimizadas
+            pivot_produtos = df_filtered.groupby(
+                ['CODPROD', 'PRODUTO', 'CODIGOVENDEDOR', 'VENDEDOR', 'CODCLI', 'CLIENTE', 'FORNECEDOR']
+            )['QT'].sum().reset_index()
+            
+            # Reorganizar colunas para melhor apresentação
+            pivot_produtos = pivot_produtos[
+                ['PRODUTO', 'CODPROD', 'VENDEDOR', 'CODIGOVENDEDOR', 'CLIENTE', 'CODCLI', 'FORNECEDOR', 'QT']
+            ]
+            
+            # Configurar AgGrid para exibir colunas de forma otimizada
+            gb_produtos = GridOptionsBuilder.from_dataframe(pivot_produtos)
+            gb_produtos.configure_default_column(
+                sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
+            )
+            gb_produtos.configure_column(
+                "PRODUTO",
+                headerName="Produto",
+                pinned="left",
+                width=250,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "CODPROD",
+                headerName="Cód. Produto",
+                pinned="left",
+                width=120,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "VENDEDOR",
+                headerName="Vendedor",
+                width=250,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "CODIGOVENDEDOR",
+                headerName="Cód. Vendedor",
+                width=120,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "CLIENTE",
+                headerName="Cliente",
+                width=250,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "CODCLI",
+                headerName="Cód. Cliente",
+                width=120,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "FORNECEDOR",
+                headerName="Fornecedor",
+                width=250,
+                filter="agTextColumnFilter"
+            )
+            gb_produtos.configure_column(
+                "QT",
+                headerName="Quantidade",
+                type=["numericColumn"],
+                valueFormatter="Math.floor(x).toLocaleString('pt-BR')",
+                cellRenderer="agAnimateShowChangeCellRenderer",
+                width=120
+            )
+            
+            # Habilitar linha de totais
+            gb_produtos.configure_grid_options(
+                enableRangeSelection=True,
+                statusBar={
+                    "statusPanels": [
+                        {"statusPanel": "agTotalRowCountComponent"},
+                        {"statusPanel": "agFilteredRowCountComponent"},
+                        {"statusPanel": "agAggregationComponent"}
+                    ]
+                }
+            )
+            
+            # Exibir tabela
+            st.write(f"Quantidade vendida por produto para {selected_mes}-{selected_ano}:")
+            AgGrid(
+                pivot_produtos,
+                gridOptions=gb_produtos.build(),
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                height=400,
+                allow_unsafe_jscode=True,
+                theme="streamlit"
+            )
+            
+            # Exportar para CSV
+            csv_produtos = pivot_produtos.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
+            st.download_button(
+                label="Download CSV - Produtos",
+                data=csv_produtos,
+                file_name=f'quantidade_vendida_por_produto_{data_inicial.year}_ate_{data_final.strftime("%Y%m%d")}.csv',
+                mime='text/csv',
+            )
+        else:
+            st.warning("Nenhum dado encontrado para o mês e ano selecionados.")
+    else:
+        st.warning("Nenhum dado encontrado para o período selecionado.")
 
 if __name__ == "__main__":
     main()
