@@ -302,7 +302,7 @@ def main():
                         **Valor Total:** R$ {pedido.get('valor_total', 0):,.2f}
                     """, unsafe_allow_html=True)
                 st.subheader("Produtos")
-                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO', 'QT', 'PVENDA', 'POSICAO']]
+                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO_PRODUTO', 'QT', 'PVENDA', 'POSICAO']]
                 produtos_df["VALOR_TOTAL_ITEM"] = produtos_df["QT"] * produtos_df["PVENDA"]
                 produtos_df = produtos_df.rename(columns={
                     "CODPROD": "Código Produto", "DESCRICAO": "Descrição", "QT": "Quantidade",
