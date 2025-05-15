@@ -48,7 +48,6 @@ SUPABASE_CONFIG = {
         "table": "PCVENDEDOR2",
         "columns": ["DATA", "QT", "PVENDA", "FORNECEDOR", "VENDEDOR", "CLIENTE", "PRODUTO", "CODPROD", "CODIGOVENDEDOR", "CODCLI"],
         "date_column": "DATA",
-        "filial_filter": "CODFILIAL=in.('1','2')"
     }
 }
 
