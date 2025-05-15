@@ -56,11 +56,12 @@ SUPABASE_CONFIG = {
 
 # Função para buscar dados do Supabase com paginação e retry
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def fetch_supabase_page(table, offset, limit, filter_query=None):
+def fetch_supabase_page(table, offset, limit, filters=None):
     try:
         query = supabase.table(table).select("*")
-        if filter_query:
-            query = query.filter(filter_query)
+        if filters:
+            for column, operator, value in filters:
+                query = query.filter(column, operator, value)
         response = query.range(offset, offset + limit - 1).execute()
         data = response.data
         logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
@@ -68,6 +69,7 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
     except Exception as e:
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
         raise
+
 
 # Função para buscar dados do Supabase com cache, paginação e paralelismo
 @st.cache_data(show_spinner=False, ttl=300)
@@ -79,21 +81,25 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
 
     try:
         all_data = []
-        limit = 10000  # Aumentado para 50.000 por página
-        max_pages = 5000 # Limite ajustável para evitar sobrecarga
+        limit = 10000
+        max_pages = 5000
 
-        # Construir filtro de data incremental, se aplicável
-        filter_query = filial_filter
+        # Construir filtros como lista de tuplas
+        filters = []
+        if filial_filter:
+            # Exemplo: "CODFILIAL=in.('1','2')" → precisa ser quebrado
+            # Supabase-py não aceita "in." diretamente, então converta para várias condições OR se necessário
+            filters.append(("CODFILIAL", "in", ["1", "2"]))  # usa operador `in`
+
         if last_update and date_column:
             last_update_str = last_update.strftime('%Y-%m-%d')
-            filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
+            filters.append((date_column, "gte", last_update_str))
 
-        # Usar ThreadPoolExecutor para paralelismo
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
             offset = 0
             for _ in range(max_pages):
-                futures.append(executor.submit(fetch_supabase_page, table, offset, limit, filter_query))
+                futures.append(executor.submit(fetch_supabase_page, table, offset, limit, filters))
                 offset += limit
                 if offset >= limit * max_pages:
                     break
@@ -135,6 +141,7 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
         df = pd.DataFrame()
 
     return _cache[key]
+
 
 # Função para buscar dados de vendas (VWSOMELIER)
 def fetch_vendas_data():
