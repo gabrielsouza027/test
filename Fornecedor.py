@@ -19,17 +19,28 @@ def init_connection():
 supabase: Client = init_connection()
 
 # Substitua a função get_data_from_supabase por esta versão
-def get_data_from_supabase():
+def get_all_data_from_supabase():
     if "all_data" not in cache:
         try:
-            response = (
-                supabase.table("PCVENDEDOR2")
-                .select("*")
-                .limit(1000)  # garantir o máximo possível de linhas
-                .execute()
-            )
-            data = response.data
-            df = pd.DataFrame(data)
+            all_data = []
+            page_size = 1000
+            offset = 0
+
+            while True:
+                response = (
+                    supabase.table("PCVENDEDOR2")
+                    .select("*")
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+                data_page = response.data
+                if not data_page:
+                    break
+
+                all_data.extend(data_page)
+                offset += page_size
+
+            df = pd.DataFrame(all_data)
 
             required_columns = ['DATA', 'QT', 'PVENDA', 'FORNECEDOR', 'VENDEDOR', 'CLIENTE', 'PRODUTO', 'CODPROD', 'CODIGOVENDEDOR', 'CODCLI']
             for col in required_columns:
@@ -45,6 +56,7 @@ def get_data_from_supabase():
         except Exception as e:
             st.error(f"Erro ao buscar dados do Supabase: {e}")
             cache["all_data"] = pd.DataFrame()
+
     return cache["all_data"]
 
 
@@ -66,7 +78,8 @@ def main():
         st.error("A data inicial não pode ser maior que a data final.")
         return
 
-    df = get_data_from_supabase()
+    df = get_all_data_from_supabase()
+
 
     if df.empty:
         st.warning("Nenhum dado encontrado para o período selecionado.")
