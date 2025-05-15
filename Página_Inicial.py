@@ -160,13 +160,13 @@ def calcular_variacao(atual, anterior):
         return 0
     return ((atual - anterior) / anterior) * 100
 
-def icone_variacao(variacao):
-    if variacao > 0:
-        return f"⬆ {variacao:.2f}%"
-    elif variacao < 0:
-        return f"⬇ {variacao:.2f}%"
-    else:
-        return "➖ 0%"
+def icone_variacao(valor):
+        if valor > 0:
+            return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
+        elif valor < 0:
+            return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
+        else:
+            return f"{valor:.2f}%"
 
 def formatar_valor(valor):
     try:
