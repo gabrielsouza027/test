@@ -266,88 +266,85 @@ def main():
     if not df.is_empty():
         st.subheader("Valor Total de Vendas por Fornecedor")
         
-        pivot_df = df.group_by('FORNECEDOR').agg([
-            pl.sum('VALOR_TOTAL_ITEM').alias('VALOR_TOTAL')
-        ]).sort('VALOR_TOTAL', reverse=True)
-        
-        pivot_df = pivot_df.with_columns([
-            pl.col('VALOR_TOTAL').round(2)
-        ])
-        
-        # Renomear colunas para exibição
-        new_columns = {'FORNECEDOR': 'FORNECEDOR', 'VALOR_TOTAL': 'Valor Total (R$)'}
         try:
-            pivot_df.columns = list(new_columns.keys())
+            pivot_df = df.group_by('FORNECEDOR').agg([
+                pl.sum('VALOR_TOTAL_ITEM').alias('VALOR_TOTAL')
+            ])
+
+            if 'VALOR_TOTAL' not in pivot_df.columns:
+                logger.error("Coluna 'VALOR_TOTAL' não encontrada após a agregação.")
+                st.error("Erro: Coluna 'VALOR_TOTAL' não encontrada após a agregação.")
+                return
+
+            pivot_df = pivot_df.sort('VALOR_TOTAL', reverse=True)
+            
+            # Renomear colunas para exibição
+            pivot_df = pivot_df.rename({
+                'FORNECEDOR': 'FORNECEDOR',
+                'VALOR_TOTAL': 'Valor Total (R$)'
+            })
+
+            pivot_df_pandas = pivot_df.to_pandas()
+            search_term = st.text_input("Buscar fornecedor", value="")
+            if search_term:
+                pivot_df_pandas = pivot_df_pandas[pivot_df_pandas['FORNECEDOR'].str.contains(search_term, case=False)]
+
+            if pivot_df_pandas.empty:
+                st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
+            else:
+                gb = GridOptionsBuilder.from_dataframe(pivot_df_pandas)
+                gb.configure_default_column(
+                    sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
+                )
+                gb.configure_column(
+                    "FORNECEDOR",
+                    headerName="Fornecedor",
+                    pinned="left",
+                    width=300,
+                    filter="agTextColumnFilter"
+                )
+                for col in pivot_df_pandas.columns:
+                    if col != "FORNECEDOR":
+                        gb.configure_column(
+                            col,
+                            headerName=col,
+                            type=["numericColumn"],
+                            valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
+                            cellRenderer="agAnimateShowChangeCellRenderer",
+                            width=110
+                        )
+
+                gb.configure_grid_options(
+                    enableRangeSelection=True,
+                    statusBar={
+                        "statusPanels": [
+                            {"statusPanel": "agTotalRowCountComponent"},
+                            {"statusPanel": "agFilteredRowCountComponent"},
+                            {"statusPanel": "agAggregationComponent"}
+                        ]
+                    }
+                )
+
+                AgGrid(
+                    pivot_df_pandas,
+                    gridOptions=gb.build(),
+                    update_mode=GridUpdateMode.SELECTION_CHANGED,
+                    height=400,
+                    allow_unsafe_jscode=True,
+                    theme="streamlit"
+                )
+
+                csv = pivot_df_pandas.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
+                st.download_button(
+                    label="Download CSV - Fornecedores",
+                    data=csv,
+                    file_name=f'valor_vendas_por_fornecedor_{data_inicial.year}_ate_{data_final.strftime("%Y%m%d")}.csv',
+                    mime='text/csv',
+                )
         except Exception as e:
-            logger.error(f"Erro ao renomear colunas: {e}\n{traceback.format_exc()}")
-            st.error(f"Erro ao renomear colunas: {e}")
-            return
-        
-        pivot_df = pivot_df.with_columns(
-            Total=pl.sum_horizontal(pl.col(col) for col in pivot_df.columns if col != 'FORNECEDOR')
-        )
-        
-        search_term = st.text_input("Buscar fornecedor", value="")
-        if search_term:
-            pivot_df = pivot_df.filter(
-                pl.col('FORNECEDOR').str.contains(search_term, case=False)
-            )
-        
-        pivot_df_pandas = pivot_df.to_pandas()
-        
-        if pivot_df.is_empty():
-            st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
-        else:
-            gb = GridOptionsBuilder.from_dataframe(pivot_df_pandas)
-            gb.configure_default_column(
-                sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
-            )
-            gb.configure_column(
-                "FORNECEDOR",
-                headerName="Fornecedor",
-                pinned="left",
-                width=300,
-                filter="agTextColumnFilter"
-            )
-            for col in pivot_df_pandas.columns:
-                if col != "FORNECEDOR":
-                    gb.configure_column(
-                        col,
-                        headerName=col,
-                        type=["numericColumn"],
-                        valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
-                        cellRenderer="agAnimateShowChangeCellRenderer",
-                        width=110
-                    )
-            
-            gb.configure_grid_options(
-                enableRangeSelection=True,
-                statusBar={
-                    "statusPanels": [
-                        {"statusPanel": "agTotalRowCountComponent"},
-                        {"statusPanel": "agFilteredRowCountComponent"},
-                        {"statusPanel": "agAggregationComponent"}
-                    ]
-                }
-            )
-            
-            AgGrid(
-                pivot_df_pandas,
-                gridOptions=gb.build(),
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                height=400,
-                allow_unsafe_jscode=True,
-                theme="streamlit"
-            )
-            
-            csv = pivot_df_pandas.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
-            st.download_button(
-                label="Download CSV - Fornecedores",
-                data=csv,
-                file_name=f'valor_vendas_por_fornecedor_{data_inicial.year}_ate_{data_final.strftime("%Y%m%d")}.csv',
-                mime='text/csv',
-            )
-        
+            logger.error(f"Erro na criação da tabela de vendas por fornecedor: {e}\n{traceback.format_exc()}")
+            st.error(f"Erro ao gerar dados: {e}")
+
         st.markdown("---")
         st.subheader("Quantidade Vendida por Produto por Mês")
         
