@@ -66,8 +66,6 @@ def auto_reload():
 def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
         all_data = []
-        offset = 0
-        limit = 1000  # Reduzido para evitar sobrecarga
         max_retries = 3
 
         # Obter o total de registros esperados
