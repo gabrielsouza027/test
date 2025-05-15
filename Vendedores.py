@@ -60,11 +60,21 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
         all_data = []
         offset = 0
-        limit = 1000  # Limite ajustado para evitar sobrecarga
+        limit = 5000  # Aumentado para 5000 para carregar mais rápido
+
+        # Obter o total de registros esperados para validação
+        count_query = supabase.table(tabela).select("*", count="exact", head=True)
+        if data_inicial and data_final:
+            if tabela == 'VWSOMELIER':
+                count_query = count_query.gte('DATA', data_inicial.isoformat()).lte('DATA', data_final.isoformat())
+            elif tabela == 'PCVENDEDOR':
+                count_query = count_query.gte('DATAPEDIDO', data_inicial.isoformat()).lte('DATAPEDIDO', data_final.isoformat())
+        count_response = count_query.execute()
+        total_records = count_response.count
+        logger.info(f"Total de registros esperados na tabela {tabela}: {total_records}")
 
         while True:
             query = supabase.table(tabela).select("*")
-            
             if data_inicial and data_final:
                 if tabela == 'VWSOMELIER':
                     query = query.gte('DATA', data_inicial.isoformat()).lte('DATA', data_final.isoformat())
@@ -87,6 +97,12 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
 
         df = pd.DataFrame(all_data)
         df.columns = df.columns.str.strip()  # Remover espaços em branco dos nomes das colunas
+        
+        # Validar se todos os registros foram fetched
+        if total_records and len(df) < total_records:
+            logger.warning(f"Fetched {len(df)} registros, mas esperados {total_records}. Pode haver dados faltando.")
+            st.warning(f"Fetched {len(df)} registros, mas esperados {total_records}. Verifique os logs para mais detalhes.")
+        
         return df
     except Exception as e:
         logger.error(f"Erro ao buscar dados do Supabase: {e}")
@@ -385,12 +401,6 @@ def criar_tabela_vendas_mensais_por_produto(data, fornecedor, ano):
     return tabela
 
 def main():
-    # Botão para limpar cache
-    if st.button("Limpar Cache"):
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.rerun()
-
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
