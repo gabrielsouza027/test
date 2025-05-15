@@ -7,6 +7,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import concurrent.futures
 from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
+import time  # Added to fix NameError
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
