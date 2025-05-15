@@ -64,7 +64,6 @@ def main():
     st.title("📊 Dashboard de Vendas (Supabase + Streamlit Cloud)")
 
     st.subheader("Filtro de Período (Fornecedores)")
-    today = datetime.today()
     col1, col2 = st.columns(2)
     data_inicial = datetime(today.year, today.month, 1)
     data_final = datetime(today.year, today.month, today.day)
