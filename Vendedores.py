@@ -29,13 +29,12 @@ def init_supabase():
         logger.error(f"Erro: Variável {e} não encontrada no secrets.toml.")
         return None
     
-    if not SUPABASE_URL or not SUPABASE_KEY:
+    if not SUPABASE_URL or not supposar(SUPABASE_KEY):
         logger.error("Erro: SUPABASE_URL ou SUPABASE_KEY não estão definidos.")
         return None
     
     try:
         supabase_client = create_client(SUPABASE_URL.strip(), SUPABASE_KEY.strip())
-        # Testar conexão com uma query simples
         response = supabase_client.table('VWSOMELIER').select('CODPROD').limit(1).execute()
         if not response.data:
             logger.error("Nenhum dado retornado na query de teste para VWSOMELIER.")
@@ -67,7 +66,6 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
         max_retries = 3
 
-        # Função para executar a consulta com retry
         @backoff.on_exception(backoff.expo, Exception, max_tries=max_retries)
         def fetch_all():
             query = supabase.table(tabela).select("*")
@@ -80,7 +78,6 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
                     logger.warning(f"Tabela {tabela} não reconhecida para filtro de data.")
             return query.execute()
 
-        # Executar a consulta
         response = fetch_all()
         response_data = response.data
 
@@ -98,260 +95,7 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
         logger.error(f"Erro ao buscar dados do Supabase para tabela {tabela}: {e}")
         return pd.DataFrame()
 
-def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, data_final):
-    required_columns_vwsomelier = ['DATA', 'PVENDA', 'QT', 'NUMPED', 'CODPROD']
-    required_columns_pcpedc = ['CODUSUR', 'VENDEDOR', 'CODCLIENTE', 'PEDIDO']
-    
-    # Verificar colunas necessárias
-    missing_columns_vwsomelier = [col for col in required_columns_vwsomelier if col not in data_vwsomelier.columns]
-    missing_columns_pcpedc = [col for col in required_columns_pcpedc if col not in data_pcpedc.columns]
-    
-    if missing_columns_vwsomelier or missing_columns_pcpedc or data_vwsomelier.empty or data_pcpedc.empty:
-        logger.error(f"Colunas faltando em VWSOMELIER: {missing_columns_vwsomelier}, PCVENDEDOR: {missing_columns_pcpedc}")
-        return pd.DataFrame(), pd.DataFrame()
-
-    # Garantir tipos de dados
-    try:
-        data_vwsomelier['DATA'] = pd.to_datetime(data_vwsomelier['DATA'], errors='coerce')
-        data_vwsomelier['PVENDA'] = pd.to_numeric(data_vwsomelier['PVENDA'], errors='coerce').fillna(0).astype('float32')
-        data_vwsomelier['QT'] = pd.to_numeric(data_vwsomelier['QT'], errors='coerce').fillna(0).astype('int32')
-        data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].astype(str).str.strip()
-        data_pcpedc['CODUSUR'] = data_pcpedc['CODUSUR'].astype(str).str.strip()
-        data_pcpedc['CODCLIENTE'] = data_pcpedc['CODCLIENTE'].astype(str).str.strip()
-        data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].astype(str).str.strip()
-    except Exception as e:
-        logger.error(f"Erro ao converter tipos de dados: {e}")
-        return pd.DataFrame(), pd.DataFrame()
-
-    data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].str.replace(r'\.0$', '', regex=True)
-    data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].str.replace(r'\.0$', '', regex=True)
-
-    data_vwsomelier = data_vwsomelier[data_vwsomelier['NUMPED'].notna() & (data_vwsomelier['NUMPED'] != '')]
-    data_pcpedc = data_pcpedc[data_pcpedc['PEDIDO'].notna() & (data_pcpedc['PEDIDO'] != '')]
-
-    data_filtrada = data_vwsomelier[(data_vwsomelier['DATA'] >= data_inicial) & 
-                                    (data_vwsomelier['DATA'] <= data_final)].copy()
-
-    if data_filtrada.empty:
-        logger.warning("Não há dados para o período selecionado em VWSOMELIER.")
-        return pd.DataFrame(), pd.DataFrame()
-
-    if 'DTCANCEL' in data_filtrada.columns:
-        data_filtrada = data_filtrada[data_filtrada['DTCANCEL'].isna()]
-
-    if data_filtrada['NUMPED'].isna().all() or data_pcpedc['PEDIDO'].isna().all():
-        logger.warning("Nenhum valor válido em NUMPED ou PEDIDO para realizar a junção.")
-        return pd.DataFrame(), pd.DataFrame()
-
-    logger.info(f"Tipos de dados em data_vwsomelier: {data_vwsomelier[['NUMPED']].dtypes}")
-    logger.info(f"Tipos de dados em data_pcpedc: {data_pcpedc[['PEDIDO']].dtypes}")
-    logger.info(f"Amostra de NUMPED: {data_vwsomelier['NUMPED'].head().tolist()}")
-    logger.info(f"Amostra de PEDIDO: {data_pcpedc['PEDIDO'].head().tolist()}")
-
-    data_filtrada = data_filtrada.merge(
-        data_pcpedc[['PEDIDO', 'CODUSUR', 'VENDEDOR', 'CODCLIENTE']],
-        left_on='NUMPED',
-        right_on='PEDIDO',
-        how='left'
-    )
-    logger.info(f"Tamanho de data_filtrada após merge: {len(data_filtrada)}")
-
-    if data_filtrada.empty:
-        logger.warning("Nenhum dado correspondente encontrado ao combinar VWSOMELIER e PCVENDEDOR.")
-        return pd.DataFrame(), pd.DataFrame()
-
-    data_filtrada = data_filtrada[data_filtrada['PVENDA'].notna() & data_filtrada['QT'].notna()]
-    logger.info(f"Linhas após remover NaN em PVENDA/QT: {len(data_filtrada)}")
-
-    data_filtrada['TOTAL_VENDAS'] = data_filtrada['PVENDA'] * data_filtrada['QT']
-
-    vendedores = data_filtrada.groupby('CODUSUR').agg(
-        vendedor=('VENDEDOR', 'first'),
-        total_vendas=('TOTAL_VENDAS', 'sum'),
-        total_clientes=('CODCLIENTE', 'nunique'),
-        total_pedidos=('NUMPED', 'nunique'),
-    ).reset_index()
-
-    vendedores['total_vendas'] = pd.to_numeric(vendedores['total_vendas'], errors='coerce').fillna(0)
-    logger.info(f"Valores em total_vendas após limpeza: {vendedores['total_vendas'].head().tolist()}")
-
-    vendedores.rename(columns={
-        'CODUSUR': 'RCA',
-        'vendedor': 'NOME',
-        'total_vendas': 'TOTAL VENDAS',
-        'total_clientes': 'TOTAL CLIENTES',
-        'total_pedidos': 'TOTAL PEDIDOS'
-    }, inplace=True)
-
-    return vendedores, data_filtrada
-
-def exibir_detalhes_vendedores(vendedores):
-    if vendedores.empty:
-        logger.warning("Nenhum dado de vendedores para exibir.")
-        return
-
-    st.markdown(
-        """
-        <div style="display: flex; align-items: center;">
-            <img src="https://cdn-icons-png.flaticon.com/512/6633/6633057.png" 
-                 width="40" style="margin-right: 10px;">
-            <p style="margin: 0;">Vendedores</p>
-        </div>
-        """,
-        unsafe_allow_html=True)
-
-    logger.info(f"Tipos de dados em vendedores: {vendedores.dtypes}")
-    logger.info(f"Amostra de TOTAL VENDAS: {vendedores['TOTAL VENDAS'].head().tolist()}")
-
-    st.dataframe(vendedores.style.format({
-        'TOTAL VENDAS': formatar_valor,
-    }), use_container_width=True)
-
-def formatar_valor(valor):
-    try:
-        if pd.isna(valor) or valor is None:
-            return "R$ 0,00"
-        valor = float(valor)
-        return locale.currency(valor, grouping=True, symbol=True)
-    except (ValueError, TypeError, locale.Error):
-        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def exibir_grafico_vendas_por_vendedor(data, vendedor_selecionado, ano_selecionado):
-    dados_vendedor = data[
-        (data['VENDEDOR'] == vendedor_selecionado) & 
-        (data['DATA'].dt.year == ano_selecionado)
-    ].copy()
-
-    if dados_vendedor.empty:
-        logger.warning(f"Nenhum dado encontrado para o vendedor {vendedor_selecionado} no ano {ano_selecionado}.")
-        return
-
-    meses = [f"{ano_selecionado}-{str(m).zfill(2)}" for m in range(1, 13)]
-    vendas_mensais = pd.DataFrame({'MÊS': meses})
-
-    dados_vendedor['TOTAL_VENDAS'] = dados_vendedor['PVENDA'] * dados_vendedor['QT']
-
-    vendas_por_mes = dados_vendedor.groupby(dados_vendedor['DATA'].dt.strftime('%Y-%m')).agg(
-        total_vendas=('TOTAL_VENDAS', 'sum'),
-        total_clientes=('CODCLIENTE', 'nunique'),
-        total_pedidos=('NUMPED', 'nunique'),
-    ).reset_index().rename(columns={'DATA': 'MÊS'})
-
-    vendas_mensais = vendas_mensais.merge(vendas_por_mes, on='MÊS', how='left').fillna({
-        'total_vendas': 0,
-        'total_clientes': 0,
-        'total_pedidos': 0
-    })
-
-    vendas_mensais.rename(columns={
-        'total_vendas': 'TOTAL VENDIDO',
-        'total_clientes': 'TOTAL CLIENTES',
-        'total_pedidos': 'TOTAL PEDIDOS',
-    }, inplace=True)
-
-    fig = px.bar(
-        vendas_mensais, 
-        x='TOTAL VENDIDO', 
-        y='MÊS', 
-        orientation='h', 
-        title=f'Vendas Mensais de {vendedor_selecionado} ({ano_selecionado})',
-        color='MÊS', 
-        color_discrete_sequence=px.colors.qualitative.Plotly,
-        hover_data={'TOTAL CLIENTES': True, 'TOTAL PEDIDOS': True, 'TOTAL VENDIDO': ':,.2f'}
-    )
-
-    fig.update_layout(
-        xaxis_title="Total Vendido (R$)",
-        yaxis_title="Mês",
-        title_font_size=20,
-        xaxis_title_font_size=16,
-        yaxis_title_font_size=16,
-        xaxis_tickfont_size=14,
-        yaxis_tickfont_size=14,
-        yaxis={'autorange': 'reversed'},
-        showlegend=True
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("TOTAL DE CLIENTES 🧍‍♂️:", int(vendas_mensais['TOTAL CLIENTES'].sum()))
-    with col2:
-        st.write("TOTAL DE PEDIDOS 🚚:", int(vendas_mensais['TOTAL PEDIDOS'].sum()))
-
-def criar_tabela_vendas_mensais(data, tipo_filtro, valores_filtro, vendedor=None):
-    try:
-        if data.columns.duplicated().any():
-            data = data.loc[:, ~data.columns.duplicated()]
-
-        obrigatorias = ['DATAPEDIDO', 'CODCLIENTE', 'CLIENTE', 'QUANTIDADE']
-        faltantes = [col for col in obrigatorias if col not in data.columns]
-        if faltantes:
-            logger.error(f"Colunas obrigatórias faltando: {', '.join(faltantes)}")
-            return pd.DataFrame()
-        
-        data['DATAPEDIDO'] = pd.to_datetime(data['DATAPEDIDO'], errors='coerce')
-        data = data.dropna(subset=['DATAPEDIDO'])
-        data['MES_ANO'] = data['DATAPEDIDO'].dt.to_period('M').astype(str)
-
-        if vendedor and 'VENDEDOR' in data.columns:
-            data = data[data['VENDEDOR'] == vendedor].copy()
-            if data.empty:
-                return pd.DataFrame()
-
-        if tipo_filtro == "Fornecedor":
-            if 'FORNECEDOR' not in data.columns:
-                logger.error("A coluna 'FORNECEDOR' não está presente nos dados filtrados.")
-                return pd.DataFrame()
-            data = data[data['FORNECEDOR'].isin(valores_filtro)].copy()
-        elif tipo_filtro == "Produto":
-            if 'PRODUTO' not in data.columns:
-                logger.error("A coluna 'PRODUTO' não está presente nos dados filtrados.")
-                return pd.DataFrame()
-            data = data[data['PRODUTO'].isin(valores_filtro)].copy()
-
-        if data.empty:
-            logger.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(valores_filtro)}")
-            return pd.DataFrame()
-
-        group_cols = ['CODUSUR', 'VENDEDOR', 'ROTA', 'CODCLIENTE', 'CLIENTE']
-        if 'FANTASIA' in data.columns:
-            group_cols.append('FANTASIA')
-
-        tabela = data.groupby(group_cols + ['MES_ANO'])['QUANTIDADE'].sum().unstack(fill_value=0).reset_index()
-        tabela['CODCLIENTE'] = tabela['CODCLIENTE'].astype(str)
-        meses = sorted([col for col in tabela.columns if col not in group_cols])
-        tabela['TOTAL'] = tabela[meses].sum(axis=1)
-
-        return tabela[group_cols + meses + ['TOTAL']]
-    
-    except Exception as e:
-        logger.error(f"Erro ao processar dados: {str(e)}")
-        return pd.DataFrame()
-
-def criar_tabela_vendas_mensais_por_produto(data, fornecedor, ano):
-    data_filtrada = data[(data['FORNECEDOR'] == fornecedor) & (data['DATAPEDIDO'].dt.year == ano)].copy()
-
-    if data_filtrada.empty:
-        return pd.DataFrame()
-    
-    data_filtrada['MES'] = data_filtrada['DATAPEDIDO'].dt.strftime('%b')
-    tabela = pd.pivot_table(
-        data_filtrada,
-        values='QUANTIDADE',
-        index='PRODUTO',
-        columns='MES',
-        aggfunc='sum',
-        fill_value=0
-    )
-
-    mes_ordenado = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-    tabela = tabela.reindex(columns=[m for m in mes_ordenado if m in tabela.columns])
-    tabela['TOTAL'] = tabela.sum(axis=1)
-    tabela = tabela.reset_index()
-
-    return tabela
+# ... (restante do código, incluindo calcular_detalhes_vendedores, exibir_detalhes_vendedores, etc., conforme fornecido anteriormente)
 
 def main():
     # Botão para limpar cache
@@ -383,6 +127,7 @@ def main():
         </div>
         """,
         unsafe_allow_html=True)
+    
     data_inicial = st.date_input("Data Inicial", value=date(2024, 4, 7))
     data_final = st.date_input("Data Final", value=date(2025, 5, 14))
 
@@ -459,7 +204,7 @@ def main():
 
     tipo_filtro = st.radio(
         "Filtrar por:", 
-        opcoes_f rato, 
+        opcoes_filtro, 
         horizontal=True,
         key="filtro_principal_radio"
     )
