@@ -50,7 +50,6 @@ def formatar_valor(valor):
 
 # Função principal
 def main():
-    
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
@@ -130,7 +129,7 @@ def main():
                 missing_columns = [col for col in required_columns if col not in df.columns]
                 if missing_columns:
                     logger.error(f"Colunas não encontradas na tabela PCVENDEDOR: {', '.join(missing_columns)}")
-                    st.error(f"Colunas não encontradas na tabela PCVENDEDOR: {', '.join(missing_columns)}")
+                    st.error(f"Colunas não encontradas naп tabela PCVENDEDOR: {', '.join(missing_columns)}")
                     return pd.DataFrame()
                 return df
             else:
@@ -446,99 +445,99 @@ def main():
 
     # Seção de Tabela Resumida
     with summary_placeholder.container():
-    st.subheader("Resultados - Resumo")
-    col1, col2 = st.columns(2)
-    with col1:
-        data_inicial_1 = st.date_input("Data Inicial (Resumo)", value=default_start_date, key="data_inicial_1")
-    with col2:
-        data_final_1 = st.date_input("Data Final (Resumo)", value=default_end_date, key="data_final_1")
-    
-    if data_inicial_1 > data_final_1:
-        st.error("A data inicial não pode ser maior que a data final.")
-        return
-    
-    st.markdown(f"**Data Inicial:** {data_inicial_1.strftime('%d/%m/%Y')} | **Data Final:** {data_final_1.strftime('%Y%m%d')}")
-    
-    # Carregar dados automaticamente
-    with st.spinner("Carregando resumo..."):
-        df = get_data(data_inicial_1, data_final_1)
-        if not df.empty:
-            result_df, supplier_map, raw_df = process_summary_data(df, data_inicial_1, data_final_1)
-            if not result_df.empty:
-                st.session_state.summary_reports.append({
-                    'data_inicial': data_inicial_1,
-                    'data_final': data_final_1,
-                    'result_df': result_df,
-                    'supplier_map': supplier_map,
-                    'raw_df': raw_df
-                })
+        st.subheader("Resultados - Resumo")
+        col1, col2 = st.columns(2)
+        with col1:
+            data_inicial_1 = st.date_input("Data Inicial (Resumo)", value=default_start_date, key="data_inicial_1")
+        with col2:
+            data_final_1 = st.date_input("Data Final (Resumo)", value=default_end_date, key="data_final_1")
+        
+        if data_inicial_1 > data_final_1:
+            st.error("A data inicial não pode ser maior que a data final.")
+            return
+        
+        st.markdown(f"**Data Inicial:** {data_inicial_1.strftime('%d/%m/%Y')} | **Data Final:** {data_final_1.strftime('%Y%m%d')}")
+        
+        # Carregar dados automaticamente
+        with st.spinner("Carregando resumo..."):
+            df = get_data(data_inicial_1, data_final_1)
+            if not df.empty:
+                result_df, supplier_map, raw_df = process_summary_data(df, data_inicial_1, data_final_1)
+                if not result_df.empty:
+                    st.session_state.summary_reports.append({
+                        'data_inicial': data_inicial_1,
+                        'data_final': data_final_1,
+                        'result_df': result_df,
+                        'supplier_map': supplier_map,
+                        'raw_df': raw_df
+                    })
+                else:
+                    st.warning("Nenhum dado processado para o período selecionado (Resumo).")
             else:
-                st.warning("Nenhum dado processado para o período selecionado (Resumo).")
-        else:
-            st.warning("Nenhum dado retornado do Supabase (Resumo).")
+                st.warning("Nenhum dado retornado do Supabase (Resumo).")
 
-    # Exibir resumos
-    for idx, report in enumerate(st.session_state.summary_reports):
-        with st.container():
-            result_df = report['result_df']
-            
-            gb = GridOptionsBuilder.from_dataframe(result_df)
-            gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-            gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=120, filter="agDateColumnFilter")
-            gb.configure_column("CODUSUR", header_name="Cód. Usuário", width=100)
-            gb.configure_column("VENDEDOR", header_name="Vendedor", width=200, flex=1)
-            gb.configure_column("PEDIDOS_DENTRO_ROTA", header_name="Ped. Dentro Rota", width=120)
-            gb.configure_column("PEDIDOS_FORA_ROTA", header_name="Ped. Fora Rota", width=120)
-            gb.configure_column("TOTAL", header_name="Total Pedidos", width=110)
-            gb.configure_column("PEDIDOS_COM_BONIFICACAO", header_name="Ped. c/ Bonif.", width=120)
-            gb.configure_column("TOTAL_VENDIDO", header_name="Total Vendido (R$)", width=140)
-            gb.configure_column("MARKUP_TOTAL", header_name="Markup Total (%)", width=130)
-            gb.configure_column("MARGEM_TOTAL", header_name="Margem Total (%)", width=130)
-            for supplier in ordered_suppliers:
-                gb.configure_column(supplier, header_name=supplier, width=80, flex=0.5)  # Largura menor para fornecedores
-            
-            grid_options = gb.build()
-            
-            # CSS para melhorar a aparência
-            st.markdown(
-                """
-                <style>
-                .ag-root-wrapper {
-                    width: 100% !important;
-                    max-width: 1200px !important;
-                    margin: 0 auto;
-                }
-                .ag-header-cell-label {
-                    justify-content: center;
-                }
-                .ag-cell {
-                    padding: 4px 8px !important;
-                }
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
-            
-            AgGrid(
-                result_df,
-                gridOptions=grid_options,
-                height=400,
-                fit_columns_on_grid_load=True,
-                update_mode=GridUpdateMode.NO_UPDATE,
-                allow_unsafe_jscode=True
-            )
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                result_df.to_excel(writer, index=False, sheet_name='Relatório')
-            excel_data = output.getvalue()
-            st.download_button(
-                label="Baixar Resumo como Excel",
-                data=excel_data,
-                file_name=f"relatorio_vendas_positivacao_{report['data_inicial'].strftime('%Y%m%d')}_{report['data_final'].strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"download_summary_{idx}"
-            )
+        # Exibir resumos
+        for idx, report in enumerate(st.session_state.summary_reports):
+            with st.container():
+                result_df = report['result_df']
+                
+                gb = GridOptionsBuilder.from_dataframe(result_df)
+                gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
+                gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=120, filter="agDateColumnFilter")
+                gb.configure_column("CODUSUR", header_name="Cód. Usuário", width=100)
+                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200, flex=1)
+                gb.configure_column("PEDIDOS_DENTRO_ROTA", header_name="Ped. Dentro Rota", width=120)
+                gb.configure_column("PEDIDOS_FORA_ROTA", header_name="Ped. Fora Rota", width=120)
+                gb.configure_column("TOTAL", header_name="Total Pedidos", width=110)
+                gb.configure_column("PEDIDOS_COM_BONIFICACAO", header_name="Ped. c/ Bonif.", width=120)
+                gb.configure_column("TOTAL_VENDIDO", header_name="Total Vendido (R$)", width=140)
+                gb.configure_column("MARKUP_TOTAL", header_name="Markup Total (%)", width=130)
+                gb.configure_column("MARGEM_TOTAL", header_name="Margem Total (%)", width=130)
+                for supplier in ordered_suppliers:
+                    gb.configure_column(supplier, header_name=supplier, width=80, flex=0.5)
+                
+                grid_options = gb.build()
+                
+                # CSS para melhorar a aparência
+                st.markdown(
+                    """
+                    <style>
+                    .ag-root-wrapper {
+                        width: 100% !important;
+                        max-width: 1200px !important;
+                        margin: 0 auto;
+                    }
+                    .ag-header-cell-label {
+                        justify-content: center;
+                    }
+                    .ag-cell {
+                        padding: 4px 8px !important;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+                AgGrid(
+                    result_df,
+                    gridOptions=grid_options,
+                    height=400,
+                    fit_columns_on_grid_load=True,
+                    update_mode=GridUpdateMode.NO_UPDATE,
+                    allow_unsafe_jscode=True
+                )
+                
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    result_df.to_excel(writer, index=False, sheet_name='Relatório')
+                excel_data = output.getvalue()
+                st.download_button(
+                    label="Baixar Resumo como Excel",
+                    data=excel_data,
+                    file_name=f"relatorio_vendas_positivacao_{report['data_inicial'].strftime('%Y%m%d')}_{report['data_final'].strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"download_summary_{idx}"
+                )
 
     # Seção de Detalhes dos Pedidos
     with detailed_placeholder.container():
@@ -581,25 +580,45 @@ def main():
                 gb = GridOptionsBuilder.from_dataframe(detailed_df)
                 gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
                 gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=120, filter="agDateColumnFilter")
-                gb.configure_column("CODUSUR", header_name="Código Usuário", width=140)
-                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200)
-                gb.configure_column("CODCLI", header_name="Cód. Cliente", width=120)
-                gb.configure_column("PEDIDO", header_name="Pedido", width=120)
-                gb.configure_column("BONIFICACAO", header_name="Bonificação", width=120)
-                gb.configure_column("QUANTIDADE", header_name="Quantidade", width=120)
-                gb.configure_column("PREÇO", header_name="Preço (R$)", width=140)
-                gb.configure_column("CUSTO", header_name="Custo (R$)", width=140)
-                gb.configure_column("VENDA_TOTAL", header_name="Venda Total (R$)", width=160)
-                gb.configure_column("CUSTO_TOTAL", header_name="Custo Total (R$)", width=160)
-                gb.configure_column("MARGEM", header_name="Margem (%)", width=120)
-                gb.configure_column("MARKUP", header_name="Markup (%)", width=120)
-                gb.configure_column("CODPRODUTO", header_name="Cód. Produto", width=120)
-                gb.configure_column("PRODUTO", header_name="Produto", width=200)
-                gb.configure_column("FORNECEDOR", header_name="Fornecedor", width=150)
+                gb.configure_column("CODUSUR", header_name="Cód. Usuário", width=100)
+                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200, flex=1)
+                gb.configure_column("CODCLI", header_name="Cód. Cliente", width=100)
+                gb.configure_column("PEDIDO", header_name="Pedido", width=100)
+                gb.configure_column("BONIFICACAO", header_name="Bonificação", width=100)
+                gb.configure_column("QUANTIDADE", header_name="Quantidade", width=100)
+                gb.configure_column("PREÇO", header_name="Preço (R$)", width=120)
+                gb.configure_column("CUSTO", header_name="Custo (R$)", width=120)
+                gb.configure_column("VENDA_TOTAL", header_name="Venda Total (R$)", width=140)
+                gb.configure_column("CUSTO_TOTAL", header_name="Custo Total (R$)", width=140)
+                gb.configure_column("MARGEM", header_name="Margem (%)", width=110)
+                gb.configure_column("MARKUP", header_name="Markup (%)", width=110)
+                gb.configure_column("CODPRODUTO", header_name="Cód. Produto", width=100)
+                gb.configure_column("PRODUTO", header_name="Produto", width=200, flex=1)
+                gb.configure_column("FORNECEDOR", header_name="Fornecedor", width=150, flex=1)
                 for supplier in ordered_suppliers:
-                    gb.configure_column(supplier, header_name=supplier, width=80)
+                    gb.configure_column(supplier, header_name=supplier, width=70, flex=0.5)
                 
                 grid_options = gb.build()
+                
+                # CSS para melhorar a aparência
+                st.markdown(
+                    """
+                    <style>
+                    .ag-root-wrapper {
+                        width: 100% !important;
+                        max-width: 1400px !important;
+                        margin: 0 auto;
+                    }
+                    .ag-header-cell-label {
+                        justify-content: center;
+                    }
+                    .ag-cell {
+                        padding: 4px 8px !important;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
                 
                 AgGrid(
                     detailed_df,
@@ -622,106 +641,124 @@ def main():
                     key=f"download_detailed_{idx}"
                 )
 
-    with detailed_placeholder.container():
-    st.subheader("Detalhes dos Pedidos por Vendedor")
-    col1, col2 = st.columns(2)
-    with col1:
-        data_inicial_2 = st.date_input("Data Inicial (Detalhes)", value=default_start_date, key="data_inicial_2")
-    with col2:
-        data_final_2 = st.date_input("Data Final (Detalhes)", value=default_end_date, key="data_final_2")
-    
-    if data_inicial_2 > data_final_2:
-        st.error("A data inicial não pode ser maior que a data final.")
-        return
-    
-    st.markdown(f"**Data Inicial:** {data_inicial_2.strftime('%d/%m/%Y')} | **Data Final:** {data_final_2.strftime('%Y%m%d')}")
-    
-    # Carregar dados automaticamente
-    with st.spinner("Carregando detalhes..."):
-        df = get_data(data_inicial_2, data_final_2)
+    # Seção de Resumo por Ano/Mês
+    with year_month_placeholder.container():
+        st.subheader("Resumo por Ano e Mês")
+        
+        # Intervalo de datas configurável (de 2024 até hoje)
+        year_month_start = date(2024, 1, 1)
+        year_month_end = date(2025, 5, 14)
+        
+        with st.spinner("Carregando dados para resumo por ano/mês..."):
+            df = get_data(year_month_start, year_month_end)
+        
         if not df.empty:
-            _, supplier_map, raw_df = process_summary_data(df, data_inicial_2, data_final_2)
-            detailed_df = process_detailed_orders(raw_df, data_inicial_2, data_final_2, supplier_map)
-            if not detailed_df.empty:
-                st.session_state.detailed_reports.append({
-                    'data_inicial': data_inicial_2,
-                    'data_final': data_final_2,
-                    'detailed_df': detailed_df,
-                    'supplier_map': supplier_map
-                })
-            else:
-                st.warning("Nenhum dado detalhado processado para o período selecionado (Detalhes).")
-        else:
-            st.warning("Nenhum dado retornado do Supabase (Detalhes).")
-
-    # Exibir detalhes
-    for idx, report in enumerate(st.session_state.detailed_reports):
-        with st.container():
-            detailed_df = report['detailed_df']
+            df['DATAPEDIDO'] = pd.to_datetime(df['DATAPEDIDO'], errors='coerce')
+            df = df.dropna(subset=['DATAPEDIDO'])
+            # Anos disponíveis a partir de 2024 até o ano atual
+            available_years = sorted(df['DATAPEDIDO'].dt.year.unique())
+            if not available_years:
+                available_years = [2025]
+            available_months = sorted(df['DATAPEDIDO'].dt.month.unique())
+            if not available_months:
+                available_months = [5]
             
-            gb = GridOptionsBuilder.from_dataframe(detailed_df)
-            gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-            gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=120, filter="agDateColumnFilter")
-            gb.configure_column("CODUSUR", header_name="Cód. Usuário", width=100)
-            gb.configure_column("VENDEDOR", header_name="Vendedor", width=200, flex=1)
-            gb.configure_column("CODCLI", header_name="Cód. Cliente", width=100)
-            gb.configure_column("PEDIDO", header_name="Pedido", width=100)
-            gb.configure_column("BONIFICACAO", header_name="Bonificação", width=100)
-            gb.configure_column("QUANTIDADE", header_name="Quantidade", width=100)
-            gb.configure_column("PREÇO", header_name="Preço (R$)", width=120)
-            gb.configure_column("CUSTO", header_name="Custo (R$)", width=120)
-            gb.configure_column("VENDA_TOTAL", header_name="Venda Total (R$)", width=140)
-            gb.configure_column("CUSTO_TOTAL", header_name="Custo Total (R$)", width=140)
-            gb.configure_column("MARGEM", header_name="Margem (%)", width=110)
-            gb.configure_column("MARKUP", header_name="Markup (%)", width=110)
-            gb.configure_column("CODPRODUTO", header_name="Cód. Produto", width=100)
-            gb.configure_column("PRODUTO", header_name="Produto", width=200, flex=1)
-            gb.configure_column("FORNECEDOR", header_name="Fornecedor", width=150, flex=1)
-            for supplier in ordered_suppliers:
-                gb.configure_column(supplier, header_name=supplier, width=70, flex=0.5)
+            current_year = 2025
+            current_month = 5
             
-            grid_options = gb.build()
-            
-            # CSS para melhorar a aparência
-            st.markdown(
-                """
-                <style>
-                .ag-root-wrapper {
-                    width: 100% !important;
-                    max-width: 1400px !important;
-                    margin: 0 auto;
+            col1, col2 = st.columns(2)
+            with col1:
+                selected_year = st.selectbox(
+                    "Selecione o Ano", 
+                    available_years, 
+                    index=available_years.index(current_year) if current_year in available_years else len(available_years)-1, 
+                    key="year_select"
+                )
+            with col2:
+                month_names = {
+                    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+                    7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
                 }
-                .ag-header-cell-label {
-                    justify-content: center;
-                }
-                .ag-cell {
-                    padding: 4px 8px !important;
-                }
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
+                month_options = [(m, month_names[m]) for m in available_months]
+                selected_month = st.selectbox(
+                    "Selecione o Mês", 
+                    options=[m[0] for m in month_options], 
+                    format_func=lambda x: month_names[x], 
+                    index=[m[0] for m in month_options].index(current_month) if current_month in available_months else len(month_options)-1, 
+                    key="month_select"
+                )
             
-            AgGrid(
-                detailed_df,
-                gridOptions=grid_options,
-                height=500,
-                fit_columns_on_grid_load=True,
-                update_mode=GridUpdateMode.NO_UPDATE,
-                allow_unsafe_jscode=True
-            )
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                detailed_df.to_excel(writer, index=False, sheet_name='Detalhes_Pedidos')
-            excel_data = output.getvalue()
-            st.download_button(
-                label="Baixar Detalhes como Excel",
-                data=excel_data,
-                file_name=f"detalhes_pedidos_{report['data_inicial'].strftime('%Y%m%d')}_{report['data_final'].strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"download_detailed_{idx}"
-            )
+            # Carregar dados automaticamente
+            with st.spinner("Processando resumo por ano/mês..."):
+                year_month_summary = process_year_month_summary(df, selected_year, selected_month)
+                if not year_month_summary.empty:
+                    st.session_state.year_month_summaries.append({
+                        'year': selected_year,
+                        'month': selected_month,
+                        'month_name': month_names[selected_month],
+                        'data': year_month_summary
+                    })
+                else:
+                    st.warning("Nenhum dado processado para o ano/mês selecionado.")
+        
+        # Exibir resumos
+        for idx, summary_info in enumerate(st.session_state.year_month_summaries):
+            with st.container():
+                st.markdown(f"### Resumo: {summary_info['month_name']} {summary_info['year']}")
+                year_month_summary = summary_info['data']
+                
+                gb = GridOptionsBuilder.from_dataframe(year_month_summary)
+                gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
+                gb.configure_column("CODUSUR", header_name="Cód. RCA", width=100)
+                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200, flex=1)
+                gb.configure_column("CODCLIENTE", header_name="Cód. Cliente", width=100)
+                gb.configure_column("FATURAMENTO_CLIENTE", header_name="Faturamento (R$)", width=150)
+                gb.configure_column("CUSTO_MERCADORIA", header_name="Custo Mercadoria (R$)", width=150)
+                gb.configure_column("CONT_MARG", header_name="Contrib. Margem (R$)", width=150)
+                gb.configure_column("MARGEM", header_name="Margem (%)", width=110)
+                
+                grid_options = gb.build()
+                
+                # CSS para melhorar a aparência
+                st.markdown(
+                    """
+                    <style>
+                    .ag-root-wrapper {
+                        width: 100% !important;
+                        max-width: 1000px !important;
+                        margin: 0 auto;
+                    }
+                    .ag-header-cell-label {
+                        justify-content: center;
+                    }
+                    .ag-cell {
+                        padding: 4px 8px !important;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+                AgGrid(
+                    year_month_summary,
+                    gridOptions=grid_options,
+                    height=400,
+                    fit_columns_on_grid_load=True,
+                    update_mode=GridUpdateMode.NO_UPDATE,
+                    allow_unsafe_jscode=True
+                )
+                
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    year_month_summary.to_excel(writer, index=False, sheet_name='Resumo_Ano_Mes')
+                excel_data = output.getvalue()
+                st.download_button(
+                    label="Baixar Resumo Ano/Mês como Excel",
+                    data=excel_data,
+                    file_name=f"resumo_vendas_{summary_info['year']}_{summary_info['month']}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"download_year_month_{idx}"
+                )
 
 if __name__ == "__main__":
     main()
