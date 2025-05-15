@@ -74,11 +74,19 @@ def main():
         st.warning("Nenhum dado encontrado para o período selecionado.")
         return
 
-    # -------------------- TABELA 1 --------------------
+        # -------------------- TABELA 1 --------------------
     st.subheader("Valor Total por Fornecedor por Mês")
     search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
 
-    df_grouped = df.groupby(['FORNECEDOR', 'MES', 'ANO'])['VALOR_TOTAL_ITEM'].sum().reset_index()
+    # Criar DataFrame de meses entre as datas
+    all_months = pd.date_range(start=data_inicial, end=data_final, freq='MS')
+    all_periods = pd.DataFrame([(d.year, d.month) for d in all_months], columns=['ANO', 'MES'])
+
+    fornecedores = df['FORNECEDOR'].unique()
+    all_keys = pd.MultiIndex.from_product([fornecedores, all_periods['ANO'].unique(), all_periods['MES'].unique()],
+                                          names=['FORNECEDOR', 'ANO', 'MES'])
+
+    df_grouped = df.groupby(['FORNECEDOR', 'ANO', 'MES'])['VALOR_TOTAL_ITEM'].sum().reindex(all_keys, fill_value=0).reset_index()
 
     pivot_df = df_grouped.pivot_table(
         values='VALOR_TOTAL_ITEM',
@@ -92,7 +100,7 @@ def main():
         1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
         7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
     }
-    pivot_df.columns = [f"{month_names[mes]}-{ano}" for ano, mes in pivot_df.columns]
+    pivot_df.columns = [f"{month_names[mes]}-{ano}" for (ano, mes) in pivot_df.columns]
     pivot_df['Total'] = pivot_df.sum(axis=1)
     pivot_df = pivot_df.reset_index()
 
@@ -103,32 +111,32 @@ def main():
         st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
     else:
         gb = GridOptionsBuilder.from_dataframe(pivot_df)
-        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=100)
-        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", width=300)
+        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=80)
+        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", flex=2)
 
         for col in pivot_df.columns:
             if col != "FORNECEDOR":
                 gb.configure_column(
                     col,
-                    headerName=col,
                     type=["numericColumn"],
                     valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
                     cellRenderer="agAnimateShowChangeCellRenderer",
-                    width=110
+                    flex=1  # Distribui proporcionalmente o restante da largura
                 )
 
-        gb.configure_grid_options(enableRangeSelection=True)
+        gb.configure_grid_options(domLayout='autoHeight', enableRangeSelection=True)
         AgGrid(
             pivot_df,
             gridOptions=gb.build(),
             update_mode=GridUpdateMode.SELECTION_CHANGED,
-            height=400,
             allow_unsafe_jscode=True,
-            theme="streamlit"
+            theme="streamlit",
+            height=450
         )
 
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
         st.download_button("Download CSV - Fornecedores", data=csv, file_name="fornecedores.csv", mime="text/csv")
+
 
     # -------------------- TABELA 2 --------------------
     st.markdown("---")
