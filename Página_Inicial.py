@@ -7,10 +7,11 @@ import locale
 import plotly.express as px
 import logging
 from concurrent.futures import ThreadPoolExecutor
+import json
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("DashboardFaturamento")
+logger = logging.getLogger(__name__)
 
 # Definir o local para a formatação monetária
 try:
@@ -25,7 +26,7 @@ SUPABASE_TABLES = [
         "table_name": "PCPEDC",
         "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
     },
-    # Descomente para incluir a tabela VWSOMELIER, se necessário
+    # Adicione mais tabelas aqui, se necessário
     # {
     #     "table_name": "VWSOMELIER",
     #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*"
@@ -68,7 +69,6 @@ def fetch_table_data(table, page_size=1000):
             logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
         except requests.exceptions.RequestException as e:
             logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-            st.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
             return []
 
     return all_data
@@ -119,7 +119,7 @@ def carregar_dados():
 
         # Remover registros com DATA_PEDIDO nula
         if data['DATA_PEDIDO'].is_null().any():
-            logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'. Filtrando registros inválidos.")
+            logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
             st.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'. Filtrando registros inválidos.")
             data = data.filter(pl.col('DATA_PEDIDO').is_not_null())
 
@@ -161,12 +161,12 @@ def calcular_variacao(atual, anterior):
     return ((atual - anterior) / anterior) * 100
 
 def icone_variacao(valor):
-    if valor > 0:
-        return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
-    elif valor < 0:
-        return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
-    else:
-        return f"{valor:.2f}%"
+        if valor > 0:
+            return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
+        elif valor < 0:
+            return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
+        else:
+            return f"{valor:.2f}%"
 
 def formatar_valor(valor):
     try:
@@ -244,8 +244,7 @@ def main():
     # Filtrar dados com base nas filiais selecionadas
     data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
 
-    # Usar data atual em vez de data fixa
-    hoje = datetime.now().normalize()
+    hoje = pd.to_datetime('2025-05-13').normalize()  # Data fixa conforme contexto
     ontem = hoje - timedelta(days=1)
     semana_inicial = hoje - timedelta(days=hoje.weekday())
     semana_passada_inicial = semana_inicial - timedelta(days=7)
