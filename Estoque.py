@@ -49,14 +49,12 @@ SUPABASE_CONFIG = {
         "table": "VWSOMELIER",
         "columns": ["CODPROD", "QT", "DESCRICAO_1", "DESCRICAO_2", "DATA"],
         "date_column": "DATA",
-        "filial_filter": "CODFILIAL=in.('1','2')"
     },
     "estoque": {
         "table": "ESTOQUE",
         "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
                     "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"],
         "date_column": "DTULTENT",
-        "filial_filter": "CODFILIAL=in.('1','2')"
     }
 }
 
