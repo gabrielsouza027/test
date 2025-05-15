@@ -78,7 +78,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
     try:
         all_data = []
         limit = 50000  # Tamanho do lote aumentado
-        max_pages = 20  # Limite ajustável
+        max_pages = 10000  # Limite ajustável
 
         # Construir filtro de data e filial
         data_inicial_str = data_inicial.strftime('%Y-%m-%d')
