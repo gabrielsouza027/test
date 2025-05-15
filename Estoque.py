@@ -6,14 +6,16 @@ from cachetools import TTLCache
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import time
 import logging
+import concurrent.futures
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuração dos caches (TTL de 60 segundos)
-cache_vendas = TTLCache(maxsize=1, ttl=60)
-cache_estoque = TTLCache(maxsize=1, ttl=60)
+# Configuração dos caches (TTL de 300 segundos)
+cache_vendas = TTLCache(maxsize=1, ttl=300)
+cache_estoque = TTLCache(maxsize=1, ttl=300)
 
 # Configuração do Supabase usando secrets do Streamlit Cloud
 try:
@@ -39,42 +41,73 @@ except Exception as e:
 SUPABASE_CONFIG = {
     "vendas": {
         "table": "VWSOMELIER",
-        "columns": ["CODPROD", "QT", "DESCRICAO_1", "DESCRICAO_2", "DATA"]
+        "columns": ["CODPROD", "QT", "DESCRICAO_1", "DESCRICAO_2", "DATA"],
+        "date_column": "DATA",
+        "filial_filter": "CODFILIAL=in.('1','2')"
     },
     "estoque": {
         "table": "ESTOQUE",
         "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
-                    "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"]
+                    "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"],
+        "date_column": "DTULTENT",
+        "filial_filter": "CODFILIAL=in.('1','2')"
     }
-    # Adicione mais tabelas aqui, se necessário
-    # "outra_tabela": {
-    #     "table": "NOME_DA_TABELA",
-    #     "columns": ["COLUNA1", "COLUNA2", ...]
-    # }
 }
 
-# Função para buscar dados do Supabase com paginação
-@st.cache_data(show_spinner=False, ttl=60)
-def fetch_supabase_data(_cache, table, columns_expected, date_column=None):
-    key = f"{table}"
+# Função para buscar dados do Supabase com paginação e retry
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def fetch_supabase_page(table, offset, limit, filter_query=None):
+    try:
+        query = supabase.table(table).select("*")
+        if filter_query:
+            query = query.filter(filter_query)
+        response = query.range(offset, offset + limit - 1).execute()
+        data = response.data
+        logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
+        return data
+    except Exception as e:
+        logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
+        raise
+
+# Função para buscar dados do Supabase com cache, paginação e paralelismo
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filial_filter=None, last_update=None):
+    key = f"{table}_{last_update or 'full'}"
     if key in _cache:
         logger.info(f"Dados da tabela {table} recuperados do cache")
         return _cache[key]
 
     try:
         all_data = []
-        offset = 0
-        limit = 10000  # Limite por página do Supabase
+        limit = 50000  # Aumentado para 50.000 por página
+        max_pages = 20  # Limite ajustável para evitar sobrecarga
 
-        while True:
-            response = supabase.table(table).select("*").range(offset, offset + limit - 1).execute()
-            data = response.data
-            if not data:
-                logger.info(f"Finalizada a recuperação de dados da tabela {table}")
-                break
-            all_data.extend(data)
-            offset += limit
-            logger.info(f"Recuperados {len(data)} registros da tabela {table}, total até agora: {len(all_data)}")
+        # Construir filtro de data incremental, se aplicável
+        filter_query = filial_filter
+        if last_update and date_column:
+            last_update_str = last_update.strftime('%Y-%m-%d')
+            filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
+
+        # Usar ThreadPoolExecutor para paralelismo
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            offset = 0
+            for _ in range(max_pages):
+                futures.append(executor.submit(fetch_supabase_page, table, offset, limit, filter_query))
+                offset += limit
+                if offset >= limit * max_pages:
+                    break
+
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    data = future.result()
+                    if data:
+                        all_data.extend(data)
+                    else:
+                        break
+                except Exception as e:
+                    logger.error(f"Erro em uma requisição: {e}")
+                    continue
 
         if all_data:
             df = pd.DataFrame(all_data)
@@ -106,15 +139,35 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None):
 # Função para buscar dados de vendas (VWSOMELIER)
 def fetch_vendas_data():
     config = SUPABASE_CONFIG["vendas"]
-    df = fetch_supabase_data(cache_vendas, config["table"], config["columns"], date_column="DATA")
+    # Buscar dados novos desde a última atualização
+    last_update = st.session_state.get('last_vendas_update', None)
+    df = fetch_supabase_data(
+        cache_vendas, 
+        config["table"], 
+        config["columns"], 
+        date_column=config["date_column"], 
+        filial_filter=config["filial_filter"], 
+        last_update=last_update
+    )
     if not df.empty:
         df['QT'] = pd.to_numeric(df['QT'], errors='coerce').fillna(0)
+        # Atualizar última data de atualização
+        if config["date_column"] in df.columns:
+            st.session_state['last_vendas_update'] = df[config["date_column"]].max()
     return df
 
 # Função para buscar dados de estoque (ESTOQUE)
 def fetch_estoque_data():
     config = SUPABASE_CONFIG["estoque"]
-    df = fetch_supabase_data(cache_estoque, config["table"], config["columns"])
+    last_update = st.session_state.get('last_estoque_update', None)
+    df = fetch_supabase_data(
+        cache_estoque, 
+        config["table"], 
+        config["columns"], 
+        date_column=config["date_column"], 
+        filial_filter=config["filial_filter"], 
+        last_update=last_update
+    )
     if not df.empty:
         for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
             if col in df.columns:
@@ -122,15 +175,17 @@ def fetch_estoque_data():
         for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCOMPRA']:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
+        if config["date_column"] in df.columns:
+            st.session_state['last_estoque_update'] = df[config["date_column"]].max()
     return df
 
-# Função para realizar o reload automático a cada 1 minuto
+# Função para realizar o reload automático a cada 30 segundos
 def auto_reload():
     if 'last_reload' not in st.session_state:
         st.session_state.last_reload = time.time()
     
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 60:  # 60 segundos
+    if current_time - st.session_state.last_reload >= 30:  # 30 segundos
         st.session_state.last_reload = current_time
         st.cache_data.clear()  # Limpar o cache para forçar nova busca
         st.rerun()  # Forçar reload da página
@@ -143,9 +198,9 @@ def main():
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
-    # Definir as datas de início e fim para os últimos 2 meses
-    data_final = datetime.date.today()  # 13/05/2025
-    data_inicial = data_final - datetime.timedelta(days=60)  # 14/03/2025
+    # Definir as datas de início e fim para os últimos 2 meses (usado para validação)
+    data_final = datetime.date.today()  # 14/05/2025
+    data_inicial = data_final - datetime.timedelta(days=60)  # 15/03/2025
 
     # Buscar dados de vendas (VWSOMELIER)
     with st.spinner("Carregando dados de vendas..."):
