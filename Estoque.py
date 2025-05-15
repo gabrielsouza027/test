@@ -56,12 +56,20 @@ SUPABASE_CONFIG = {
 
 # Função para buscar dados do Supabase com paginação e retry
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def fetch_supabase_page(table, offset, limit, filters=None):
+def fetch_supabase_page(table, offset, limit, filter_query=None):
     try:
         query = supabase.table(table).select("*")
-        if filters:
-            for column, operator, value in filters:
+
+        # Aplicar múltiplos filtros, se fornecido
+        if filter_query:
+            if isinstance(filter_query, list):
+                for filtro in filter_query:
+                    column, operator, value = filtro
+                    query = query.filter(column, operator, value)
+            else:
+                column, operator, value = filter_query
                 query = query.filter(column, operator, value)
+
         response = query.range(offset, offset + limit - 1).execute()
         data = response.data
         logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
@@ -69,6 +77,7 @@ def fetch_supabase_page(table, offset, limit, filters=None):
     except Exception as e:
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
         raise
+
 
 
 # Função para buscar dados do Supabase com cache, paginação e paralelismo
