@@ -69,7 +69,7 @@ def fetch_table_data(table, page_size, offset):
 @st.cache_data(show_spinner=False, ttl=300)  # Cache de 1 hora
 def carregar_dados(_start_date=start_date):  # Adicionado _start_date para invalidar cache se mudar
     all_data = []
-    page_size = 500  # Reduzido para 500 para respostas mais rápidas
+    page_size = 2000  # Reduzido para 500 para respostas mais rápidas
 
     try:
         # Usar ThreadPoolExecutor para requisições paralelas
