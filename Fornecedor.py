@@ -293,7 +293,6 @@ def main():
         }
         
         # Criar nomes de colunas únicos
-        new_columns = ['FORNECEDOR']
         seen_columns = set(['FORNECEDOR'])
         for col in pivot_df.columns[1:]:
             try:
