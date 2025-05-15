@@ -26,7 +26,7 @@ start_date = (today - timedelta(days=365)).strftime('%Y-%m-%d')  # Desde o ano a
 SUPABASE_TABLES = [
     {
         "table_name": "PCPEDC",
-        "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*&CODFILIAL=in.('1','2')&DATA_PEDIDO=gte.{start_date}"
+        "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
     },
     # Adicione mais tabelas aqui, se necessário
     # {
