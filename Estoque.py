@@ -79,8 +79,8 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
 
     try:
         all_data = []
-        limit = 50000  # Aumentado para 50.000 por página
-        max_pages = 20  # Limite ajustável para evitar sobrecarga
+        limit = 10000  # Aumentado para 50.000 por página
+        max_pages = 5000 # Limite ajustável para evitar sobrecarga
 
         # Construir filtro de data incremental, se aplicável
         filter_query = filial_filter
