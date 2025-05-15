@@ -47,7 +47,7 @@ SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO_PRODUTO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
