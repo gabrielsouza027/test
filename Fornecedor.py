@@ -112,14 +112,9 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
     date_column = config["date_column"]
 
     try:
-        # Construir filtro de data (using text comparison since DATA is text)
-        data_inicial_str = data_inicial.strftime('%Y-%m-%d')
-        data_final_str = data_final.strftime('%Y-%m-%d')
-        filter_query = f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
-        logger.info(f"Filter query: {filter_query}")
-
-        # Executar busca assíncrona
-        all_data = asyncio.run(fetch_all_pages(table, limit=50000, max_pages=10000, filter_query=filter_query))
+        # Fetch all data without date filter in Supabase
+        logger.info("Buscando todos os dados da tabela sem filtro de data no Supabase.")
+        all_data = asyncio.run(fetch_all_pages(table, limit=50000, max_pages=10000, filter_query=None))
 
         if all_data:
             df = pl.DataFrame(all_data)
@@ -131,10 +126,6 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
                 _cache[key] = pl.DataFrame()
                 return pl.DataFrame()
-
-            # Debug: Display raw data fetched from Supabase
-            st.write("Dados brutos retornados pelo Supabase:")
-            st.json(all_data[:10])  # Show first 10 rows for debugging
 
             # Garantir tipos de dados
             df = df.with_columns([
@@ -170,11 +161,11 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             _cache[key] = df
             logger.info(f"Dados carregados com sucesso: {len(df)} registros")
             if df.is_empty():
-                logger.warning(f"Dados filtrados resultaram em DataFrame vazio para o filtro: {filter_query}")
-                st.warning(f"Dados filtrados resultaram em DataFrame vazio para o filtro: {filter_query}")
+                logger.warning(f"Dados filtrados resultaram em DataFrame vazio para o período: {data_inicial} a {data_final}")
+                st.warning(f"Dados filtrados resultaram em DataFrame vazio para o período: {data_inicial} a {data_final}")
         else:
-            logger.warning(f"Nenhum dado retornado da tabela {table} para o filtro: {filter_query}")
-            st.warning(f"Nenhum dado retornado da tabela {table} para o filtro: {filter_query}")
+            logger.warning(f"Nenhum dado retornado da tabela {table}")
+            st.warning(f"Nenhum dado retornado da tabela {table}")
             _cache[key] = pl.DataFrame()
             df = pl.DataFrame()
 
