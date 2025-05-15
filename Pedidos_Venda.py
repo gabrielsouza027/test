@@ -40,14 +40,14 @@ except Exception as e:
     st.stop()
 
 # Configuração do cache (TTL de 60 segundos)
-cache = TTLCache(maxsize=10, ttl=60)
+cache = TTLCache(maxsize=10, ttl=300)
 
 # Configuração das tabelas e colunas esperadas
 SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VEI', 'NOME_VENI', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO_PRODUTO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
@@ -198,7 +198,7 @@ def main():
     # Processar dados (agrupar por NUMPED)
     df_grouped = df_pedidos.groupby('NUMPED').agg({
         'created_at': 'first', 'NUMCAR': 'first', 'DATA': 'first', 'CODCLI': 'first', 'CLIENTE': 'first',
-        'CODIGO_VEI': 'first', 'NOME_VENI': 'first', 'NUMNOTA': 'first', 'OBS': 'first',
+        'CODIGO_VENDEDOR': 'first', 'NOME_VENDEDOR': 'first', 'NUMNOTA': 'first', 'OBS': 'first',
         'OBS1': 'first', 'OBS2': 'first', 'POSICAO': 'first', 'CODFILIAL': 'first',
         'MUNICIPIO': 'first', 'QT': 'sum', 'PVENDA': 'mean'
     }).reset_index()
@@ -254,7 +254,8 @@ def main():
                                 search_client.lower() in str(p.get('CLIENTE', '')).lower() or 
                                 search_client.lower() in str(p.get('NUMPED', '')).lower()]
             if search_seller:
-                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENI', '')).lower()]
+                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENDEDOR', '')).lower()]
+                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('CODIGO_VENDEDOR', '')).lower()]
             if st.session_state.selected_filiais:
                 pedidos_list = [p for p in pedidos_list if str(p.get('CODFILIAL', '')) in st.session_state.selected_filiais]
             if not (show_liberado and show_montado and show_faturado and show_cancelado):
@@ -292,8 +293,8 @@ def main():
                     """, unsafe_allow_html=True)
                 with col6:
                     st.markdown(f"""
-                        **Cód. Veículo:** {pedido.get('CODIGO_VEI', 'N/A')}  
-                        **Vendedor:** {pedido.get('NOME_VENI', 'N/A')}  
+                        **Cód. Vendedor:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
+                        **Vendedor:** {pedido.get('NOME_VENDEDOR', 'N/A')}  
                         **Nº Nota:** {pedido.get('NUMNOTA', 'N/A')}  
                         **Cód. Filial:** {pedido.get('CODFILIAL', 'N/A')}  
                         **Observação:** {pedido.get('OBS', 'N/A')}  
@@ -302,7 +303,7 @@ def main():
                         **Valor Total:** R$ {pedido.get('valor_total', 0):,.2f}
                     """, unsafe_allow_html=True)
                 st.subheader("Produtos")
-                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO', 'QT', 'PVENDA', 'POSICAO']]
+                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO_PRODUTO', 'QT', 'PVENDA', 'POSICAO']]
                 produtos_df["VALOR_TOTAL_ITEM"] = produtos_df["QT"] * produtos_df["PVENDA"]
                 produtos_df = produtos_df.rename(columns={
                     "CODPROD": "Código Produto", "DESCRICAO": "Descrição", "QT": "Quantidade",
