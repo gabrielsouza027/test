@@ -155,19 +155,31 @@ def exibir_grafico_top_produtos(df, periodo_inicial, periodo_final):
     top_produtos['Valor_Total_Vendido_Formatado'] = top_produtos['Valor_Total_Vendido'].apply(formatar_valor)
     top_produtos['Total_Vendido'] = top_produtos['Total_Vendido'].apply(formatar_quantidade)
 
+    # Create a 2D array for customdata with formatted values
+    custom_data = top_produtos[['Valor_Total_Vendido_Formatado', 'Total_Vendido']].values
+
     fig = px.bar(top_produtos, x='DESCRICAO_1', y='Valor_Total_Vendido',
-             title='Top 20 Produtos Mais Vendidos',
-             labels={'DESCRICAO_1': 'Produto', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)'},
-             color='Valor_Total_Vendido', color_continuous_scale='RdYlGn',
-             hover_data={'DESCRICAO_1': False, 'Valor_Total_Vendido_Formatado': True, 'Total_Vendido': True})
+                 title='Top 20 Produtos Mais Vendidos',
+                 labels={'DESCRICAO_1': 'Produto', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)'},
+                 color='Valor_Total_Vendido', color_continuous_scale='RdYlGn')
 
-    fig.update_traces(texttemplate="%{customdata[0]}", textposition="outside", textfont_size=12,
-                  customdata=top_produtos[['Valor_Total_Vendido_Formatado']])
+    # Update traces to include customdata and set the bar labels
+    fig.update_traces(
+        customdata=custom_data,
+        texttemplate="%{customdata[0]}",  # Display formatted value on the bar
+        textposition="outside",
+        textfont_size=12,
+        hovertemplate="<b>%{x}</b><br>Valor Total Vendido: %{customdata[0]}<br>Total Vendido: %{customdata[1]}<extra></extra>"
+    )
 
-    fig.update_traces(texttemplate="%{customdata}", textposition="outside", textfont_size=12,
-                      customdata=top_produtos['Valor_Total_Vendido_Formatado'])
-    fig.update_layout(title_font_size=20, xaxis_title_font_size=13, yaxis_title_font_size=13,
-                      xaxis_tickfont_size=10, yaxis_tickfont_size=12, xaxis_tickangle=-45)
+    fig.update_layout(
+        title_font_size=20,
+        xaxis_title_font_size=13,
+        yaxis_title_font_size=13,
+        xaxis_tickfont_size=10,
+        yaxis_tickfont_size=12,
+        xaxis_tickangle=-45
+    )
 
     st.plotly_chart(fig, use_container_width=True, key=f"top_produtos_{periodo_inicial}_{periodo_final}")
 
@@ -290,16 +302,7 @@ def main():
         
         exibir_grafico_top_produtos(df, periodo_inicio_produtos, periodo_fim_produtos)
 
-        st.subheader("Evolução das Vendas ao Longo do Período")
-        col1, col2 = st.columns(2)
-        with col1:
-            periodo_inicio_tempo = st.date_input('Data de Início - Vendas por Tempo', value=primeiro_dia_mes, key='inicio_tempo')
-        with col2:
-            periodo_fim_tempo = st.date_input('Data de Fim - Vendas por Tempo', value=ultimo_dia_mes, key='fim_tempo')
-
-        if periodo_inicio_tempo > periodo_fim_tempo:
-            st.error("A data inicial não pode ser maior que a data final.")
-            return
+       
         
 
 if __name__ == "__main__":
