@@ -120,7 +120,7 @@ def main():
         st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
     else:
         gb = GridOptionsBuilder.from_dataframe(pivot_df)
-        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=100, flex=1)
+        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=500, flex=1)
         gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", flex=2)
 
         for col in pivot_df.columns:
@@ -140,7 +140,7 @@ def main():
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            height=400
+            height=300
         )
 
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
