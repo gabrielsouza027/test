@@ -86,14 +86,19 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
 async def fetch_all_pages(table, limit=10000, max_pages=1000, filter_query=None):
     all_data = []
     async with aiohttp.ClientSession() as session:
-        for offset in range(0, limit * max_pages, limit):
+        for page in range(max_pages):
+            offset = page * limit
             try:
                 data = await fetch_supabase_page_async(session, table, offset, limit, filter_query)
                 if not data:
                     logger.info(f"No more data at offset {offset}. Stopping pagination.")
                     break
                 all_data.extend(data)
-                await asyncio.sleep(0.5)  # Delay de 500ms para evitar rate limits
+                # Parar se menos de limit registros foram retornados
+                if len(data) < limit:
+                    logger.info(f"Fewer than {limit} records returned ({len(data)}) at offset {offset}. Stopping pagination.")
+                    break
+                await asyncio.sleep(1.0)  # Aumentar delay para 1 segundo
             except Exception as e:
                 logger.error(f"Erro em uma requisição para {table} at offset {offset}: {str(e)}")
                 continue
