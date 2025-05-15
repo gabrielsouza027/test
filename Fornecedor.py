@@ -221,7 +221,6 @@ def main():
     st.title("Dashboard de Vendas")
     
     auto_reload()
-
     st.subheader("Filtro de Período (Fornecedores)")
     today = datetime.today()
     col1, col2 = st.columns(2)
@@ -239,74 +238,7 @@ def main():
         )
     
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
-    data_final = datetime.combine(data_final, datetime.max.time())
-    
-    if data_inicial > data_final:
-        st.error("A data inicial não pode ser maior que a data final.")
-        return
 
-    with st.spinner("Carregando dados do Supabase..."):
-        df = get_data_from_supabase(cache, data_inicial, data_final)
-    
-    if not df.is_empty():
-        st.subheader("Valor Total por Fornecedor por Mês")
-        search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
-        
-        df_grouped = df.group_by(['FORNECEDOR', 'ANO', 'MES']).agg(
-            VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
-        ).sort(['FORNECEDOR', 'ANO', 'MES'])
-        
-        # Verifica colunas necessárias
-        if 'ANO' not in df_grouped.columns or 'MES' not in df_grouped.columns:
-            logger.error("Colunas ANO ou MES ausentes no DataFrame agrupado.")
-            st.error("Erro: Colunas ANO ou MES ausentes no DataFrame agrupado.")
-            return
-        
-        try:
-            pivot_df = df_grouped.pivot(
-                values='VALOR_TOTAL_ITEM',
-                index='FORNECEDOR',
-                columns=['ANO', 'MES'],
-                aggregate_function='sum',
-                sort_columns=True
-            )
-        except Exception as e:
-            logger.error(f"Erro ao criar pivot table: {e}")
-            st.error(f"Erro ao criar pivot table: {e}")
-            return
-        
-        month_names = {
-            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr',
-            5: 'Mai', 6: 'Jun', 7: 'Jul', 8: 'Ago',
-            9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
-        }
-        
-        new_columns = ['FORNECEDOR']
-        seen_columns = set(new_columns)
-        
-        for col in pivot_df.columns[1:]:
-            try:
-                year, month = col
-                month = int(month)
-                month_name = month_names.get(month, f"Mês{month}")
-                col_name = f"{month_name}-{year}"
-                if col_name in seen_columns:
-                    i = 1
-                    base_name = col_name
-                    while f"{base_name}_{i}" in seen_columns:
-                        i += 1
-                    col_name = f"{base_name}_{i}"
-                new_columns.append(col_name)
-                seen_columns.add(col_name)
-            except (ValueError, TypeError) as e:
-                logger.error(f"Erro ao processar coluna {col}: {e}")
-                st.error(f"Erro ao processar colunas do pivot: {col}. Verifique os dados de ANO e MES.")
-                return
-        
-        if len(new_columns) != len(set(new_columns)):
-            logger.error(f"Colunas duplicadas detectadas: {new_columns}")
-            st.error("Erro: Colunas duplicadas no pivot. Verifique os dados de ANO e MES.")
-            return
         
         try:
             pivot_df.columns = new_columns
