@@ -244,7 +244,8 @@ def main():
     # Filtrar dados com base nas filiais selecionadas
     data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
 
-    hoje = pd.to_datetime(today).normalize()  # Data fixa conforme contexto
+    today = datetime.today()  # Obter a data atual com hora
+    hoje = pd.to_datetime(today).normalize()  # Normalizar para meia-noite
     ontem = hoje - timedelta(days=1)
     semana_inicial = hoje - timedelta(days=hoje.weekday())
     semana_passada_inicial = semana_inicial - timedelta(days=7)
