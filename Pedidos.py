@@ -30,9 +30,9 @@ except Exception as e:
     st.error(f"Erro ao inicializar o cliente Supabase: {e}")
     st.stop()
 
-# Configuração dos caches (TTL de 60 segundos)
-cache_pcmovendpend = TTLCache(maxsize=1, ttl=60)
-cache_pcpedc = TTLCache(maxsize=1, ttl=60)
+# Configuração dos caches (TTL de 120 segundos para reduzir chamadas frequentes)
+cache_pcmovendpend = TTLCache(maxsize=1, ttl=120)
+cache_pcpedc = TTLCache(maxsize=1, ttl=120)
 
 # Configuração das tabelas
 SUPABASE_CONFIG = [
@@ -54,8 +54,8 @@ SUPABASE_CONFIG = [
 def formatar_valor(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Função para buscar dados do Supabase com cache e paginação
-@st.cache_data(show_spinner=False, ttl=60)
+# Função para buscar dados do Supabase com cache e paginação otimizada
+@st.cache_data(show_spinner=False, ttl=120)
 def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-05-14"):
     data = {}
     for table_config in SUPABASE_CONFIG:
@@ -71,14 +71,11 @@ def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-
         try:
             all_data = []
             offset = 0
-            limit = 1000  # Limite ajustado para evitar sobrecarga
+            limit = 500  # Reduzido para 500 para melhorar a performance
 
-            # Formatar datas para compatibilidade
-            data_inicial_str = data_inicial
-            data_final_str = data_final
-
+            # Fetch all data without date filter in Supabase
             while True:
-                response = supabase.table(table_name).select("*").gte(table_config["date_column"], data_inicial_str).lte(table_config["date_column"], data_final_str).range(offset, offset + limit - 1).execute()
+                response = supabase.table(table_name).select("*").range(offset, offset + limit - 1).execute()
                 response_data = response.data
                 if not response_data:
                     logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
@@ -88,8 +85,8 @@ def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-
                 logger.info(f"Recuperados {len(response_data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
 
             if not all_data:
-                logger.warning(f"Nenhum dado encontrado na tabela {table_name} para o período {data_inicial} a {data_final}")
-                st.warning(f"Nenhum dado encontrado na tabela {table_name} para o período {data_inicial} a {data_final}.")
+                logger.warning(f"Nenhum dado encontrado na tabela {table_name}")
+                st.warning(f"Nenhum dado encontrado na tabela {table_name}.")
                 cache[cache_key] = pd.DataFrame()
                 data[table_name] = cache[cache_key]
                 continue
@@ -110,7 +107,7 @@ def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-
             df = df[columns]
             
             # Verificar colunas obrigatórias
-            required_columns = ['DTFIMOS', 'CONFERENTE'] if table_name == 'PCMOVENDPEND' else ['DATA', 'DESCRICAO', 'L_COUNT', 'M_COUNT']
+            required_columns = ['DTFIMOS', 'CONFERENTE'] if table_name == 'PCMOVENDPEND' else ['DATA', 'DESCRICAO', 'L_COUNT', 'M_COUNT', 'F_COUNT']
             missing_required = [col for col in required_columns if col not in df.columns]
             if missing_required:
                 logger.error(f"Colunas obrigatórias não encontradas na tabela {table_name}: {', '.join(missing_required)}")
@@ -123,9 +120,15 @@ def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-
             if table_name == 'PCMOVENDPEND':
                 df['DTFIMOS'] = pd.to_datetime(df['DTFIMOS'], errors='coerce')
                 df = df.dropna(subset=['DTFIMOS'])
+                # Apply date filter in Pandas
+                df = df[(df['DTFIMOS'].dt.date >= pd.to_datetime(data_inicial).date()) & 
+                        (df['DTFIMOS'].dt.date <= pd.to_datetime(data_final).date())]
             else:
                 df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
                 df = df.dropna(subset=['DATA'])
+                # Apply date filter in Pandas
+                df = df[(df['DATA'].dt.date >= pd.to_datetime(data_inicial).date()) & 
+                        (df['DATA'].dt.date <= pd.to_datetime(data_final).date())]
             
             # Converter colunas numéricas
             if table_name == 'PCPEDC_POSICAO':
@@ -184,7 +187,7 @@ def main():
             border: 1px solid #ddd;
         }
         .ranking-table tr:nth-child(even) {
-            background-color: #f00000;
+            background-color: #f9f9f9;
         }
         .ranking-table tr:hover {
             background-color: #ddd;
@@ -297,14 +300,9 @@ def main():
 
     st.markdown("<h1>Relatório de Pedidos</h1>", unsafe_allow_html=True)
 
-    # Botão para limpar cache manualmente
-    if st.button("Limpar Cache"):
-        st.cache_data.clear()
-        st.rerun()
-
-    # Definir período padrão (1º de janeiro até 14/05/2025)
+    # Definir período padrão (1º de janeiro até a data atual)
     data_inicial_default = "2025-01-01"
-    data_final_default = "2025-05-14"
+    data_final_default = "2025-05-15"  # Ajustado para a data atual
 
     # Buscar dados do Supabase com cache
     caches = {config["table_name"]: config["cache"] for config in SUPABASE_CONFIG}
@@ -313,8 +311,8 @@ def main():
     data_1 = data.get('PCMOVENDPEND', pd.DataFrame())
     data_2 = data.get('PCPEDC_POSICAO', pd.DataFrame())
 
-    # Ajustar para a data atual: 14/05/2025
-    hoje = date(2025, 5, 14)
+    # Ajustar para a data atual: 15/05/2025
+    hoje = date(2025, 5, 15)
     inicio_semana = hoje - timedelta(days=hoje.weekday())
     inicio_mes = hoje.replace(day=1)
 
@@ -331,6 +329,7 @@ def main():
 
             total_liberados = data_2['L_COUNT'].sum()
             total_montados = data_2['M_COUNT'].sum()
+            total_faturados = data_2['F_COUNT'].sum()
 
             st.markdown("<h3>Regiões</h3>", unsafe_allow_html=True)
             rotas_selecionadas = st.multiselect("Selecione as Rotas", rotas_desejadas, default=rotas_desejadas)
@@ -338,7 +337,8 @@ def main():
 
             data_aggregated = data_filtrada.groupby(['DESCRICAO']).agg(
                 pedidos_liberados=('L_COUNT', 'sum'),
-                pedidos_montados=('M_COUNT', 'sum')
+                pedidos_montados=('M_COUNT', 'sum'),
+                pedidos_faturados=('F_COUNT', 'sum')
             ).reset_index()
 
         # Calcular totais com validação de coluna
@@ -371,6 +371,7 @@ def main():
                     rota_nome = row['DESCRICAO']
                     pedidos_liberados = row['pedidos_liberados']
                     pedidos_montados = row['pedidos_montados']
+                    pedidos_faturados = row['pedidos_faturados']
                     col = cols[index % num_colunas]
                     with col:
                         st.markdown(f"""
@@ -387,11 +388,16 @@ def main():
                                         <p style="margin: 0px; font-weight: bold;">MONTADOS:</p>
                                         <div class="number">{int(pedidos_montados)}</div>
                                     </div>
+                                    <div class="card-item" style="display: flex; align-items: center; justify-content: space-around">
+                                        <img src="https://cdn-icons-png.flaticon.com/512/5220/5220625.png" width="30" style="margin-right: 5px;">
+                                        <p style="margin: 0px; font-weight: bold;">FATURADOS:</p>
+                                        <div class="number">{int(pedidos_faturados)}</div>
+                                    </div>
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
             else:
-                st.warning("Nenhum dado disponível para exibir pedidos por rota.")
+                st.warning("Nenhum dado disponível para exHabía pedidos por rota.")
 
         with col2:
             st.markdown("### Pedidos Conferidos por Funcionário")
@@ -424,6 +430,11 @@ def main():
                     <img src="https://cdn-icons-png.flaticon.com/512/976/976438.png" width="35" style="margin-right: 5px;">
                     <span class="total-paragrafo">TOTAL MONTADOS:</span>
                     <span class="total-numero-conf">{int(total_montados)}</span>
+                </div>
+                <div class="total-item">
+                    <img src="https://cdn-icons-png.flaticon.com/512/5220/5220625.png" width="35" style="margin-right: 5px;">
+                    <span class="total-paragrafo">TOTAL FATURADOS:</span>
+                    <span class="total-numero-conf">{int(total_faturados)}</span>
                 </div>
                 <div class="total-item">
                     <img src="https://cdn-icons-png.flaticon.com/512/5220/5220625.png" width="35" style="margin-right: 5px;">
