@@ -1,5 +1,6 @@
 import streamlit as st
 import polars as pl
+import pandas as pd
 from supabase import create_client, Client
 import datetime
 from cachetools import TTLCache
@@ -115,10 +116,10 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
             filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
 
         # Executar busca assíncrona
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else asyncio.new_event_loop()
         all_data = loop.run_until_complete(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=filter_query))
-        loop.close()
+        if loop and not loop.is_running():
+            loop.close()
 
         if all_data:
             # Converter para Polars DataFrame
@@ -276,7 +277,7 @@ def main():
         if pesquisar:
             df = df.filter(
                 pl.col('Código do Produto').cast(pl.Utf8).str.contains(pesquisar, case=False) |
-                pl.col('Nome do Produto').str.contains(pesquisar, case=False)
+                pl.col('Nome do Produto').str.contains(pesquirar, case=False)
             )
 
         df = df.with_columns(
@@ -290,6 +291,15 @@ def main():
             'Código da Filial', 'Código do Produto', 'Nome do Produto', 'Estoque Disponível', 'Quantidade Reservada',
             'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada',
             'Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra'
+        ])
+
+        # Formatar números e datas em Polars antes de converter para Pandas
+        df = df.with_columns([
+            pl.col(col).cast(pl.Int64).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8).alias(col)
+            for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']
+        ]).with_columns([
+            pl.col(col).cast(pl.Date).map_elements(lambda x: x.strftime('%Y-%m-%d') if x is not None else "", return_dtype=pl.Utf8).alias(col)
+            for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']
         ])
 
         # Converter para Pandas para AgGrid
@@ -316,15 +326,8 @@ def main():
         gb.configure_grid_options(domLayout='normal')
         grid_options = gb.build()
 
-        # Formatar números e datas para exibição
-        df_display = df_pandas.copy()
-        for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
-            df_display[col] = df_display[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
-        for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']:
-            df_display[col] = df_display[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else "")
-
         AgGrid(
-            df_display,
+            df_pandas,
             gridOptions=grid_options,
             update_mode=GridUpdateMode.NO_UPDATE,
             allow_unsafe_jscode=True,
@@ -354,6 +357,12 @@ def main():
                 'CÓDIGO PRODUTO', 'NOME DO PRODUTO', 'QUANTIDADE VENDIDA', 'ESTOQUE TOTAL'
             ])
 
+            # Formatar números em Polars
+            sem_estoque_df = sem_estoque_df.with_columns([
+                pl.col('QUANTIDADE VENDIDA').cast(pl.Int64).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8),
+                pl.col('ESTOQUE TOTAL').cast(pl.Int64).map_elements(lambda x: f"{x:,}", return_dtype=pl.Utf8)
+            ])
+
             # Converter para Pandas para AgGrid
             sem_estoque_df_pandas = sem_estoque_df.to_pandas()
 
@@ -367,14 +376,8 @@ def main():
             gb.configure_grid_options(domLayout='normal')
             grid_options = gb.build()
 
-            df_sem_estoque_display = sem_estoque_df_pandas.copy()
-            df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
-            df_sem_estoque_display['ESTOQUE TOTAL'] = pd.to_numeric(df_sem_estoque_display['ESTOQUE TOTAL'], errors='coerce').fillna(0)
-            df_sem_estoque_display['QUANTIDADE VENDIDA'] = df_sem_estoque_display['QUANTIDADE VENDIDA'].apply(lambda x: f"{x:,.0f}")
-            df_sem_estoque_display['ESTOQUE TOTAL'] = df_sem_estoque_display['ESTOQUE TOTAL'].apply(lambda x: f"{x:,.0f}")
-
             AgGrid(
-                df_sem_estoque_display,
+                sem_estoque_df_pandas,
                 gridOptions=grid_options,
                 update_mode=GridUpdateMode.NO_UPDATE,
                 allow_unsafe_jscode=True,
@@ -382,8 +385,6 @@ def main():
                 theme='streamlit',
                 fit_columns_on_grid_load=True
             )
-
-if [Ideal Response]
 
 if __name__ == "__main__":
     main()
