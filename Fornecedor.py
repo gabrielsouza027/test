@@ -60,17 +60,18 @@ async def fetch_supabase_page_async(session, table, offset, limit, date_column, 
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
-            "Range": f"{offset}-{offset + limit - 1}"
+            "Range": f"rows={offset}-{offset + limit - 1}"
         }
         
-        # Construir URL com filtro de data
-        url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
+        # Filtros no formato query parameters do Supabase REST
+        # O filtro deve usar gte e lte para a coluna de data, com AND implícito
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select={','.join(SUPABASE_CONFIG['vendas']['columns'])}"
         url += f"&{date_column}=gte.{data_inicial.strftime('%Y-%m-%d')}"
         url += f"&{date_column}=lte.{data_final.strftime('%Y-%m-%d')}"
         
-        logger.info(f"Requesting URL: {url}")
+        logger.info(f"Requesting URL: {url} with Range: {headers['Range']}")
         async with session.get(url, headers=headers, timeout=30) as response:
-            if response.status != 200:
+            if response.status not in (200, 206):
                 content = await response.text()
                 logger.error(f"Erro HTTP {response.status} ao buscar {table}: {content}")
                 raise Exception(f"HTTP {response.status}: {content}")
@@ -80,7 +81,6 @@ async def fetch_supabase_page_async(session, table, offset, limit, date_column, 
     except Exception as e:
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {str(e)}\n{traceback.format_exc()}")
         raise
-
 
 # Função para buscar todas as páginas assincronamente
 async def fetch_all_pages(table, date_column, data_inicial, data_final, limit=5000, max_pages=5000):
@@ -177,7 +177,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             invalid_ano_mes = df.filter(
                 pl.col('ANO').is_null() |
                 pl.col('MES').is_null() |
-                ~pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) |
+                ~pl.col('MES').cast(pl.Int32, strict=False).is_in(list(range(1,13))) |
                 ~pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)
             )
             if not invalid_ano_mes.is_empty():
@@ -186,7 +186,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             df = df.filter(
                 pl.col('ANO').is_not_null() &
                 pl.col('MES').is_not_null() &
-                pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) &
+                pl.col('MES').cast(pl.Int32, strict=False).is_in(list(range(1,13))) &
                 pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)
             )
 
@@ -226,7 +226,7 @@ def auto_reload():
     if current_time - st.session_state.last_reload >= 30:
         st.session_state.last_reload = current_time
         st.cache_data.clear()
-        st.rerun()
+        st.experimental_rerun()
 
 def main():
     st.title("Dashboard de Vendas")
@@ -271,28 +271,33 @@ def main():
         search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
         
         # Agrupar por fornecedor, ano e mês
-        df_grouped = df.group_by(['FORNECEDOR', 'MES', 'ANO']).agg(
+        df_grouped = df.group_by(['FORNECEDOR', 'ANO', 'MES']).agg(
             VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
         ).sort(['FORNECEDOR', 'ANO', 'MES'])
         
-
+        # Criar pivot table (ano, mes) como colunas, fornecedor em index, valores soma VALOR_TOTAL_ITEM
+        pivot_df = df_grouped.pivot(
+            values='VALOR_TOTAL_ITEM',
+            index='FORNECEDOR',
+            columns=['ANO', 'MES'],
+            aggregate_function='sum',
+            sort_columns=True
+        )
         
-        # Log pivot columns for debugging
-        logger.info(f"Pivot table columns: {pivot_df.columns}")
-        
-        # Renomear colunas
+        # Gerar novos nomes para as colunas de acordo com o mês-ano
         month_names = {
             1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr',
             5: 'Mai', 6: 'Jun', 7: 'Jul', 8: 'Ago',
             9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
         }
         
-        # Criar nomes de colunas únicos
-        seen_columns = set(['FORNECEDOR'])
+        new_columns = ['FORNECEDOR']
+        seen_columns = set(new_columns)
         for col in pivot_df.columns[1:]:
             try:
-                year, month = col  # Desestruturar tupla (ANO, MES)
-                month = int(month)  # Garantir que o mês é um inteiro
+                # col é tupla (ANO, MES)
+                year, month = col
+                month = int(month)
                 month_name = month_names.get(month, f"Mês{month}")
                 col_name = f"{month_name}-{year}"
                 # Evitar duplicatas
@@ -309,13 +314,11 @@ def main():
                 st.error(f"Erro ao processar colunas do pivot: {col}. Verifique os dados de ANO e MES.")
                 return
         
-        # Validar que não há duplicatas
         if len(new_columns) != len(set(new_columns)):
             logger.error(f"Colunas duplicadas detectadas: {new_columns}")
             st.error("Erro: Colunas duplicadas no pivot. Verifique os dados de ANO e MES.")
             return
         
-        # Atribuir novos nomes de colunas
         try:
             pivot_df.columns = new_columns
         except Exception as e:
@@ -323,7 +326,7 @@ def main():
             st.error(f"Erro ao renomear colunas: {e}")
             return
         
-        # Adicionar coluna de total
+        # Adicionar coluna de Total
         pivot_df = pivot_df.with_columns(
             Total=pl.sum_horizontal(pl.col(col) for col in pivot_df.columns if col != 'FORNECEDOR')
         )
@@ -337,7 +340,6 @@ def main():
         # Converter para Pandas para AgGrid
         pivot_df_pandas = pivot_df.to_pandas()
         
-        # Verificar se há resultados
         if pivot_df.is_empty():
             st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
         else:
@@ -397,17 +399,14 @@ def main():
         st.markdown("---")
         st.subheader("Quantidade Vendida por Produto por Mês")
         
-        # Filtro de Ano e Mês
         anos = df['ANO'].unique().sort().to_list()
         meses = df['MES'].unique().sort().to_list()
         meses_nomes = [month_names.get(m, str(m)) for m in meses]
         
-        # Definir padrões
         current_year = today.year
         current_month = today.month
         current_month_name = month_names.get(current_month, str(current_month))
         
-        # Seletor de Ano e Mês
         col1, col2 = st.columns(2)
         with col1:
             selected_ano = st.selectbox(
@@ -424,31 +423,29 @@ def main():
                 key="mes_produto"
             )
         
-        # Converter nome do mês para número
-        selected_mes_num = list(month_names.keys())[list(month_names.values()).index(selected_mes)] if selected_mes in month_names.values() else int(selected_mes)
+        selected_mes_num = (
+            list(month_names.keys())[list(month_names.values()).index(selected_mes)]
+            if selected_mes in month_names.values()
+            else int(selected_mes)
+        )
         
-        # Filtrar dados
         df_filtered = df.filter(
             (pl.col('MES') == selected_mes_num) & (pl.col('ANO') == selected_ano)
         )
         
         if not df_filtered.is_empty():
-            # Agrupar por colunas
             pivot_produtos = df_filtered.group_by(
                 ['CODPROD', 'PRODUTO', 'CODIGOVENDEDOR', 'VENDEDOR', 'CODCLI', 'CLIENTE', 'FORNECEDOR']
             ).agg(
                 QT=pl.col('QT').sum()
             ).sort(['PRODUTO'])
             
-            # Reorganizar colunas
             pivot_produtos = pivot_produtos.select([
                 'PRODUTO', 'CODPROD', 'VENDEDOR', 'CODIGOVENDEDOR', 'CLIENTE', 'CODCLI', 'FORNECEDOR', 'QT'
             ])
             
-            # Converter para Pandas
             pivot_produtos_pandas = pivot_produtos.to_pandas()
             
-            # Configurar AgGrid
             gb_produtos = GridOptionsBuilder.from_dataframe(pivot_produtos_pandas)
             gb_produtos.configure_default_column(
                 sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
@@ -527,7 +524,6 @@ def main():
                 theme="streamlit"
             )
             
-            # Exportar para CSV
             csv_produtos = pivot_produtos_pandas.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
             st.download_button(
                 label="Download CSV - Produtos",
@@ -542,3 +538,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
