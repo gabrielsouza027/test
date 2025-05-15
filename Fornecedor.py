@@ -11,6 +11,7 @@ import nest_asyncio
 from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 import time
+import traceback
 
 # Aplicar nest_asyncio para compatibilidade com Streamlit
 nest_asyncio.apply()
@@ -62,9 +63,13 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
             "Range": f"{offset}-{offset + limit - 1}"
         }
         url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
-        if filter_query:
+        if filter_query and isinstance(filter_query, str) and filter_query.strip():
+            logger.info(f"Applying filter_query: {filter_query}")
             url += f"&{filter_query}"
+        else:
+            logger.info("No filter_query applied.")
         
+        logger.info(f"Requesting URL: {url}")
         async with session.get(url, headers=headers, timeout=30) as response:
             if response.status != 200:
                 content = await response.text()
@@ -74,7 +79,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
             logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
             return data
     except Exception as e:
-        logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {str(e)}")
+        logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {str(e)}\n{traceback.format_exc()}")
         raise
 
 # Função para buscar todas as páginas assincronamente
