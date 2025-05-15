@@ -82,7 +82,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, date_column, 
         raise
 
 # Função para buscar todas as páginas assincronamente
-async def fetch_all_pages(table, date_column, data_inicial, data_final, limit=1000, max_pages=1000):
+async def fetch_all_pages(table, date_column, data_inicial, data_final, limit=5000, max_pages=5000):
     all_data = []
     async with aiohttp.ClientSession() as session:
         for page in range(max_pages):
