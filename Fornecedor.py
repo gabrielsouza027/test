@@ -12,8 +12,8 @@ cache = TTLCache(maxsize=1, ttl=180)
 # Conexão com o Supabase usando variáveis de ambiente
 @st.cache_resource
 def init_connection():
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
+    url = ("SUPABASE_URL")
+    key = ("SUPABASE_KEY")
     if not url or not key:
         st.error("As variáveis de ambiente SUPABASE_URL e SUPABASE_KEY devem estar configuradas.")
         return None
