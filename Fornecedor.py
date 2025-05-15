@@ -18,7 +18,6 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-# Buscar dados da tabela do Supabase com cache
 # Substitua a função get_data_from_supabase por esta versão
 def get_data_from_supabase():
     if "all_data" not in cache:
@@ -67,7 +66,7 @@ def main():
         st.error("A data inicial não pode ser maior que a data final.")
         return
 
-    df = get_data_from_supabase(data_inicial, data_final)
+    df = get_data_from_supabase()
 
     if df.empty:
         st.warning("Nenhum dado encontrado para o período selecionado.")
@@ -137,7 +136,7 @@ def main():
     st.subheader("Quantidade Vendida por Produto por Mês")
 
     df_filtered_range = df[df['ANO'] >= 2024]
-    anos = sorted(df_filtered_range['ANO'].unique())
+    anos = list(range(2024, datetime.today().year + 1))
     meses = sorted(df_filtered_range['MES'].unique())
     meses_nomes = [month_names[m] for m in meses]
 
