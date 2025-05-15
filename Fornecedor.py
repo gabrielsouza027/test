@@ -52,6 +52,22 @@ SUPABASE_CONFIG = {
     }
 }
 
+# Mapeamento dos nomes dos meses em português
+month_names = {
+    1: "Janeiro",
+    2: "Fevereiro",
+    3: "Março",
+    4: "Abril",
+    5: "Maio",
+    6: "Junho",
+    7: "Julho",
+    8: "Agosto",
+    9: "Setembro",
+    10: "Outubro",
+    11: "Novembro",
+    12: "Dezembro"
+}
+
 # Função para buscar página do Supabase com retry (assíncrona)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def fetch_supabase_page_async(session, table, offset, limit, date_column, data_inicial, data_final):
@@ -133,6 +149,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 _cache[key] = pl.DataFrame()
                 return pl.DataFrame()
 
+            # Converter coluna DATA para string e validar formato
             df = df.with_columns(
                 pl.col('DATA').cast(pl.Utf8).alias('DATA')
             )
@@ -144,20 +161,24 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 logger.warning(f"Valores inválidos na coluna DATA: {invalid_data['DATA'].head(5).to_list()}")
                 st.warning(f"Detectados valores inválidos na coluna DATA do Supabase. Verifique a tabela {table}.")
 
+            # Filtrar apenas datas válidas
             df = df.filter(
                 pl.col('DATA').str.contains(r'^\d{4}-\d{2}-\d{2}$')
             )
 
+            # Converter DATA para tipo data e outras colunas
             df = df.with_columns([
                 pl.col('DATA').str.to_date(format="%Y-%m-%d", strict=False).alias('DATA'),
                 pl.col('QT').cast(pl.Float64, strict=False).fill_null(0),
                 pl.col('PVENDA').cast(pl.Float64, strict=False).fill_null(0)
             ])
 
+            # Filtrar linhas onde DATA é válida
             df = df.filter(pl.col('DATA').is_not_null())
 
             logger.info(f"Amostra de valores de DATA após parsing: {df['DATA'].head(5).to_list()}")
 
+            # Calcular valor total por item e extrair mês e ano
             df = df.with_columns([
                 (pl.col('QT') * pl.col('PVENDA')).alias('VALOR_TOTAL_ITEM'),
                 pl.col('DATA').dt.month().alias('MES'),
@@ -238,10 +259,25 @@ def main():
         )
     
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
+    data_final = datetime.combine(data_final, datetime.min.time())
 
+    df = get_data_from_supabase(cache, data_inicial, data_final)
+    
+    if not df.is_empty():
+        st.subheader("Valor Total de Vendas por Fornecedor")
         
+        pivot_df = df.group_by('FORNECEDOR').agg([
+            pl.sum('VALOR_TOTAL_ITEM').alias('VALOR_TOTAL')
+        ]).sort('VALOR_TOTAL', reverse=True)
+        
+        pivot_df = pivot_df.with_columns([
+            pl.col('VALOR_TOTAL').round(2)
+        ])
+        
+        # Renomear colunas para exibição
+        new_columns = {'FORNECEDOR': 'FORNECEDOR', 'VALOR_TOTAL': 'Valor Total (R$)'}
         try:
-            pivot_df.columns = new_columns
+            pivot_df.columns = list(new_columns.keys())
         except Exception as e:
             logger.error(f"Erro ao renomear colunas: {e}\n{traceback.format_exc()}")
             st.error(f"Erro ao renomear colunas: {e}")
@@ -251,6 +287,7 @@ def main():
             Total=pl.sum_horizontal(pl.col(col) for col in pivot_df.columns if col != 'FORNECEDOR')
         )
         
+        search_term = st.text_input("Buscar fornecedor", value="")
         if search_term:
             pivot_df = pivot_df.filter(
                 pl.col('FORNECEDOR').str.contains(search_term, case=False)
@@ -314,8 +351,8 @@ def main():
         st.markdown("---")
         st.subheader("Quantidade Vendida por Produto por Mês")
         
-        anos = df['ANO'].unique().sort().to_list()
-        meses = df['MES'].unique().sort().to_list()
+        anos = sorted(df['ANO'].unique().to_list())
+        meses = sorted(df['MES'].unique().to_list())
         meses_nomes = [month_names.get(m, str(m)) for m in meses]
         
         current_year = today.year
@@ -353,12 +390,14 @@ def main():
                 ['CODPROD', 'PRODUTO', 'CODIGOVENDEDOR', 'VENDEDOR', 'CODCLI', 'CLIENTE', 'FORNECEDOR']
             ).agg(
                 QT=pl.col('QT').sum()
-            ).sort(['PRODUTO'])
+            ).sort('PRODUTO')
+            
             pivot_produtos = pivot_produtos.select([
                 'PRODUTO', 'CODPROD', 'VENDEDOR', 'CODIGOVENDEDOR', 'CLIENTE', 'CODCLI', 'FORNECEDOR', 'QT'
             ])
+            
             pivot_produtos_pandas = pivot_produtos.to_pandas()
-            # Configuração do Grid
+            
             gb_produtos = GridOptionsBuilder.from_dataframe(pivot_produtos_pandas)
             gb_produtos.configure_default_column(
                 sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
