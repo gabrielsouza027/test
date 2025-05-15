@@ -115,22 +115,11 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
         # Construir filtro de data
         data_inicial_str = data_inicial.strftime('%Y-%m-%d')
         data_final_str = data_final.strftime('%Y-%m-%d')
-        filter_query = (
-            f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
-        )
+        # Simplified filter query to ensure compatibility
+        filter_query = f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
         logger.info(f"Filter query: {filter_query}")
 
-        # Debug: Fetch a small sample without filters to check table contents
-        sample_data = asyncio.run(fetch_all_pages(table, limit=10, max_pages=1, filter_query=None))
-        if sample_data:
-            logger.info(f"Sample data (first 10 rows): {sample_data}")
-            st.write("Sample data from PCVENDEDOR2 (first 10 rows):")
-            st.json(sample_data)
-        else:
-            logger.warning("No data in PCVENDEDOR2 table (sample query).")
-            st.warning("No data found in PCVENDEDOR2 table (sample query).")
-
-        # Executar busca assíncrona com filtros
+        # Executar busca assíncrona
         all_data = asyncio.run(fetch_all_pages(table, limit=50000, max_pages=10000, filter_query=filter_query))
 
         if all_data:
@@ -146,17 +135,26 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
 
             # Garantir tipos de dados
             df = df.with_columns([
-                pl.col('DATA').str.to_datetime(format="%Y-%m-%d", strict=False),
+                # Convert DATA to datetime, handling string format
+                pl.col('DATA').str.to_date(format="%Y-%m-%d", strict=False).alias('DATA'),
                 pl.col('QT').cast(pl.Float64, strict=False).fill_null(0),
                 pl.col('PVENDA').cast(pl.Float64, strict=False).fill_null(0)
-            ]).filter(pl.col('DATA').is_not_null())
+            ])
+
+            # Filter out rows where DATA conversion failed (null dates)
+            df = df.filter(pl.col('DATA').is_not_null())
+
+            # Apply date range filter in Polars after fetching
+            df = df.filter(
+                (pl.col('DATA') >= data_inicial) & (pl.col('DATA') <= data_final)
+            )
 
             # Validar dados
             if df['QT'].lt(0).any():
                 logger.warning("Quantidades negativas encontradas em 'QT'. Substituindo por 0.")
                 df = df.with_columns(pl.col('QT').clip(min=0))
             if df['PVENDA'].lt(0).any():
-                logger.warning("Preços negativos encontrados em 'PVENDA'. Substituindo por 0.")
+                logger.warning("Preços negativas encontradas em 'PVENDA'. Substituindo por 0.")
                 df = df.with_columns(pl.col('PVENDA').clip(min=0))
 
             # Calcular valor total e extrair mês/ano
@@ -168,6 +166,9 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
 
             _cache[key] = df
             logger.info(f"Dados carregados com sucesso: {len(df)} registros")
+            if df.is_empty():
+                logger.warning(f"Dados filtrados resultaram em DataFrame vazio para o filtro: {filter_query}")
+                st.warning(f"Dados filtrados resultaram em DataFrame vazio para o filtro: {filter_query}")
         else:
             logger.warning(f"Nenhum dado retornado da tabela {table} para o filtro: {filter_query}")
             st.warning(f"Nenhum dado retornado da tabela {table} para o filtro: {filter_query}")
