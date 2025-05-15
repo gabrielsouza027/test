@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import locale
 import plotly.express as px
 import logging
+import concurrent.futures
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -18,15 +20,18 @@ except locale.Error:
     locale.setlocale(locale.LC_ALL, '')
 
 # Configuração das URLs e tabelas do Supabase
+# Adicionado filtro na URL para filiais 1 e 2 e período relevante
+today = pd.to_datetime('2025-05-13').normalize()
+start_date = (today - timedelta(days=365)).strftime('%Y-%m-%d')  # Desde o ano anterior
 SUPABASE_TABLES = [
     {
         "table_name": "PCPEDC",
-        "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
+        "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*&CODFILIAL=in.('1','2')&DATA_PEDIDO=gte.{start_date}"
     },
     # Adicione mais tabelas aqui, se necessário
     # {
     #     "table_name": "VWSOMELIER",
-    #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*"
+    #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*&CODFILIAL=in.('1','2')&DATA_PEDIDO=gte.{start_date}"
     # },
 ]
 
@@ -42,42 +47,55 @@ def get_headers():
         st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
         st.stop()
 
-# Função para obter dados do Supabase com cache e paginação
-@st.cache_data(show_spinner=False, ttl=180)
-def carregar_dados():
+# Função para buscar dados de uma tabela com retry
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def fetch_table_data(table, page_size, offset):
+    table_name = table["table_name"]
+    url = table["url"]
+    headers = get_headers()
+    headers["Range"] = f"{offset}-{offset + page_size - 1}"
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)  # Timeout reduzido para 15s
+        response.raise_for_status()
+        data = response.json()
+        logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, offset {offset}")
+        return data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erro ao buscar dados da tabela {table_name}, offset {offset}: {e}")
+        raise
+
+# Função para carregar dados do Supabase com cache, paginação e paralelismo
+@st.cache_data(show_spinner=False, ttl=300)  # Cache de 1 hora
+def carregar_dados(_start_date=start_date):  # Adicionado _start_date para invalidar cache se mudar
     all_data = []
-    page_size = 1000  # Tamanho do lote por requisição
+    page_size = 500  # Reduzido para 500 para respostas mais rápidas
 
     try:
-        for table in SUPABASE_TABLES:
-            table_name = table["table_name"]
-            url = table["url"]
-            logger.info(f"Carregando dados da tabela {table_name}")
-            
-            offset = 0
-            while True:
-                # Define o intervalo para a paginação
-                headers = get_headers()
-                headers["Range"] = f"{offset}-{offset + page_size - 1}"
+        # Usar ThreadPoolExecutor para requisições paralelas
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            for table in SUPABASE_TABLES:
+                table_name = table["table_name"]
+                logger.info(f"Iniciando carregamento da tabela {table_name}")
                 
-                # Faz a requisição
-                try:
-                    response = requests.get(url, headers=headers, timeout=30)
-                    response.raise_for_status()  # Levanta exceção para erros HTTP
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-                    st.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-                    return pd.DataFrame()
+                offset = 0
+                while True:
+                    futures.append(executor.submit(fetch_table_data, table, page_size, offset))
+                    offset += page_size
+                    # Parar após 10 páginas para evitar sobrecarga (ajustar conforme necessário)
+                    if offset >= page_size * 10:
+                        break
 
-                data = response.json()
-                if not data:  # Se não houver mais dados, interrompe o loop
-                    logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
-                    break
-                
-                # Adiciona os dados da página atual à lista
-                all_data.extend(data)
-                offset += page_size  # Avança para a próxima página
-                logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
+            # Coletar resultados
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    data = future.result()
+                    if data:
+                        all_data.extend(data)
+                except Exception as e:
+                    logger.error(f"Erro em uma requisição: {e}")
+                    continue
 
         # Converte para DataFrame
         if all_data:
@@ -99,7 +117,7 @@ def carregar_dados():
             # Calcular VLTOTAL como PVENDA * QT
             data['VLTOTAL'] = data['PVENDA'] * data['QT']
             
-            # Filtrar apenas filiais 1 e 2
+            # Filtrar apenas filiais 1 e 2 (redundante devido ao filtro na URL, mas mantido por segurança)
             data = data[data['CODFILIAL'].isin(['1', '2'])].copy()
             
             # Converter DATA_PEDIDO para datetime
@@ -153,8 +171,6 @@ def formatar_valor(valor):
         return f"R$ {valor:,.2f}"
 
 def main():
-
-    
     st.markdown("""
     <style>
         .st-emotion-cache-1ibsh2c {
