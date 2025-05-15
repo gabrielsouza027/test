@@ -81,6 +81,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, date_column, 
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {str(e)}\n{traceback.format_exc()}")
         raise
 
+
 # Função para buscar todas as páginas assincronamente
 async def fetch_all_pages(table, date_column, data_inicial, data_final, limit=5000, max_pages=5000):
     all_data = []
