@@ -54,7 +54,7 @@ SUPABASE_CONFIG = {
 
 # Função para buscar página do Supabase com retry (assíncrona)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-async def fetch_supabase_page_async(session, table, offset, limit, filter_query=None):
+async def fetch_supabase_page_async(session, table, offset, limit, date_column, data_inicial, data_final):
     try:
         headers = {
             "apikey": SUPABASE_KEY,
@@ -62,12 +62,11 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
             "Content-Type": "application/json",
             "Range": f"{offset}-{offset + limit - 1}"
         }
+        
+        # Construir URL com filtro de data
         url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
-        if filter_query and isinstance(filter_query, str) and filter_query.strip():
-            logger.info(f"Applying filter_query: {filter_query}")
-            url += f"&{filter_query}"
-        else:
-            logger.info("No filter_query applied.")
+        url += f"&{date_column}=gte.{data_inicial.strftime('%Y-%m-%d')}"
+        url += f"&{date_column}=lte.{data_final.strftime('%Y-%m-%d')}"
         
         logger.info(f"Requesting URL: {url}")
         async with session.get(url, headers=headers, timeout=30) as response:
@@ -83,13 +82,15 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         raise
 
 # Função para buscar todas as páginas assincronamente
-async def fetch_all_pages(table, limit=10000, max_pages=1000, filter_query=None):
+async def fetch_all_pages(table, date_column, data_inicial, data_final, limit=1000, max_pages=1000):
     all_data = []
     async with aiohttp.ClientSession() as session:
         for page in range(max_pages):
             offset = page * limit
             try:
-                data = await fetch_supabase_page_async(session, table, offset, limit, filter_query)
+                data = await fetch_supabase_page_async(
+                    session, table, offset, limit, date_column, data_inicial, data_final
+                )
                 if not data:
                     logger.info(f"No more data at offset {offset}. Stopping pagination.")
                     break
@@ -98,7 +99,7 @@ async def fetch_all_pages(table, limit=10000, max_pages=1000, filter_query=None)
                 if len(data) < limit:
                     logger.info(f"Fewer than {limit} records returned ({len(data)}) at offset {offset}. Stopping pagination.")
                     break
-                await asyncio.sleep(1.0)  # Aumentar delay para 1 segundo
+                await asyncio.sleep(0.5)  # Pequeno delay entre requisições
             except Exception as e:
                 logger.error(f"Erro em uma requisição para {table} at offset {offset}: {str(e)}")
                 continue
@@ -120,13 +121,8 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
     date_column = config["date_column"]
 
     try:
-        # Aplicar filtro de data no Supabase
-        date_filter = (
-            f"{date_column}.gte.{data_inicial.strftime('%Y-%m-%d')}"
-            f"&{date_column}.lte.{data_final.strftime('%Y-%m-%d')}"
-        )
-        logger.info(f"Fetching data with date filter: {date_filter}")
-        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=date_filter))
+        logger.info(f"Fetching data from {data_inicial} to {data_final}")
+        all_data = asyncio.run(fetch_all_pages(table, date_column, data_inicial, data_final))
 
         if all_data:
             df = pl.DataFrame(all_data)
@@ -267,7 +263,6 @@ def main():
         df = get_data_from_supabase(cache, data_inicial, data_final)
     
     if not df.is_empty():
-        # --- Primeira Tabela: Valor Total por Fornecedor por Mês ---
         # --- Primeira Tabela: Valor Total por Fornecedor por Mês ---
         st.subheader("Valor Total por Fornecedor por Mês")
         
