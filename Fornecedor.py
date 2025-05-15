@@ -14,19 +14,10 @@ cache = TTLCache(maxsize=1, ttl=180)
 def init_connection():
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
-    st.write(f"URL: {url}, Key: {'***' if key else None}")  # Log para depuração
     if not url or not key:
         st.error("As variáveis de ambiente SUPABASE_URL e SUPABASE_KEY devem estar configuradas.")
         return None
-    try:
-        client = create_client(url, key)
-        # Teste de conexão
-        response = client.table("PCVENDEDOR2").select("*").limit(1).execute()
-        st.write("Teste de conexão:", response.data)
-        return client
-    except Exception as e:
-        st.error(f"Erro ao conectar ao Supabase: {e}")
-        return None
+    return create_client(url, key)
 
 supabase: Client = init_connection()
 if supabase is None:
@@ -48,7 +39,6 @@ def get_all_data_from_supabase():
                     .execute()
                 )
                 data_page = response.data
-                st.write(f"Offset: {offset}, Registros retornados: {len(data_page)}")  # Log
                 if not data_page:
                     break
 
@@ -60,7 +50,6 @@ def get_all_data_from_supabase():
                 return pd.DataFrame()
 
             df = pd.DataFrame(all_data)
-            st.write("Colunas retornadas:", df.columns.tolist())  # Log
 
             required_columns = ['DATA', 'QT', 'PVENDA', 'FORNECEDOR', 'VENDEDOR', 'CLIENTE', 'PRODUTO', 'CODPROD', 'CODIGOVENDEDOR', 'CODCLI']
             missing_columns = [col for col in required_columns if col not in df.columns]
@@ -119,7 +108,7 @@ def main():
         st.write(f"Data máxima: {df['DATA'].max().strftime('%d/%m/%Y')}")
         return
 
-    # TABELA 1
+        # TABELA 1
     st.subheader("Valor Total por Fornecedor por Mês")
     search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
     
@@ -153,9 +142,9 @@ def main():
         """
         <style>
         .ag-root-wrapper {
-            width: 1000px !important;
+            width: 1000px !important;  /* Largura fixa da tabela */
             max-width: 1000px !important;
-            margin: 0 auto;
+            margin: 0 auto;  /* Centraliza a tabela */
         }
         .ag-header, .ag-body-viewport {
             width: 100% !important;
@@ -173,8 +162,8 @@ def main():
         st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
     else:
         gb = GridOptionsBuilder.from_dataframe(pivot_df)
-        gb.configure_default_column(sortable=True, filter=True, resizable=False, flex=1)
-        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", width=200)
+        gb.configure_default_column(sortable=True, filter=True, resizable=False, flex=1)  # flex=1 para distribuir espaço igualmente
+        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", width=200)  # Largura fixa para a coluna Fornecedor
     
         for col in pivot_df.columns:
             if col != "FORNECEDOR":
@@ -183,13 +172,13 @@ def main():
                     type=["numericColumn"],
                     valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
                     cellRenderer="agAnimateShowChangeCellRenderer",
-                    flex=1
+                    flex=1  # Todas as colunas compartilham o espaço igualmente
                 )
     
         gb.configure_grid_options(
-            domLayout='normal',
-            suppressHorizontalScroll=False,
-            autoSizeStrategy=None
+            domLayout='normal',  # Evita autoHeight para usar altura fixa
+            suppressHorizontalScroll=False,  # Permite rolagem horizontal se necessário
+            autoSizeStrategy=None  # Desativa auto-ajuste para usar flex
         )
     
         AgGrid(
@@ -198,8 +187,8 @@ def main():
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            height=400,
-            fit_columns_on_grid_load=False
+            height=400,  # Altura fixa da tabela
+            fit_columns_on_grid_load=False  # Evita ajuste automático das colunas
         )
     
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
@@ -207,11 +196,11 @@ def main():
 
     # TABELA 2
     st.markdown("---")
-    st.subheader("Quantidade Total Vendida por Produto")
+    st.subheader("Quantidade Vendida por Produto por Mês")
 
     df_filtered_range = df[df['ANO'] >= 2024]
     anos = sorted(df_filtered_range['ANO'].unique())
-    meses = sorted(df_filtered_range['MES'].unique())
+    meses = sorted(df_filtered_range['MES'].unique())  # Fixed syntax error
     meses_nomes = [month_names[m] for m in meses]
 
     current_year = today.year
@@ -228,19 +217,26 @@ def main():
     df_filtered = df_filtered_range[(df_filtered_range['MES'] == selected_mes_num) & (df_filtered_range['ANO'] == selected_ano)]
 
     if not df_filtered.empty:
-        pivot_produtos = df_filtered.groupby(['CODPROD', 'PRODUTO', 'FORNECEDOR'])['QT'].sum().reset_index()
-        pivot_produtos = pivot_produtos[['PRODUTO', 'CODPROD', 'FORNECEDOR', 'QT']]
+        pivot_produtos = df_filtered.groupby(
+            ['CODPROD', 'PRODUTO', 'CODIGOVENDEDOR', 'VENDEDOR', 'CODCLI', 'CLIENTE', 'FORNECEDOR']
+        )['QT'].sum().reset_index()
+
+        pivot_produtos = pivot_produtos[['PRODUTO', 'CODPROD', 'VENDEDOR', 'CODIGOVENDEDOR', 'CLIENTE', 'CODCLI', 'FORNECEDOR', 'QT']]
 
         gb_produtos = GridOptionsBuilder.from_dataframe(pivot_produtos)
         gb_produtos.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=100)
-        gb_produtos.configure_column("PRODUTO", headerName="Produto", pinned="left", width=250)
-        gb_produtos.configure_column("CODPROD", headerName="Código Produto", width=120)
-        gb_produtos.configure_column("FORNECEDOR", headerName="Fornecedor", width=250)
-        gb_produtos.configure_column("QT", headerName="Quantidade Total", type=["numericColumn"], valueFormatter="Math.floor(x).toLocaleString('pt-BR')", width=150)
+        gb_produtos.configure_column("PRODUTO", pinned="left", width=250)
+        gb_produtos.configure_column("CODPROD", width=120)
+        gb_produtos.configure_column("VENDEDOR", width=250)
+        gb_produtos.configure_column("CODIGOVENDEDOR", width=120)
+        gb_produtos.configure_column("CLIENTE", width=250)
+        gb_produtos.configure_column("CODCLI", width=120)
+        gb_produtos.configure_column("FORNECEDOR", width=250)
+        gb_produtos.configure_column("QT", type=["numericColumn"], valueFormatter="Math.floor(x).toLocaleString('pt-BR')", width=120)
 
         gb_produtos.configure_grid_options(enableRangeSelection=True)
 
-        st.write(f"Quantidade total vendida por produto para {selected_mes}-{selected_ano}:")
+        st.write(f"Quantidade vendida por produto para {selected_mes}-{selected_ano}:")
         AgGrid(
             pivot_produtos,
             gridOptions=gb_produtos.build(),
