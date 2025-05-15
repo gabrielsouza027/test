@@ -180,7 +180,7 @@ def main():
 
     df_filtered_range = df[df['ANO'] >= 2024]
     anos = sorted(df_filtered_range['ANO'].unique())
-    meses = sorted(df_filtered a'sMES'].unique())
+    meses = sorted(df_filtered a'MES'].unique())
     meses_nomes = [month_names[m] for m in meses]
 
     current_year = today.year
