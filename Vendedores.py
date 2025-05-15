@@ -349,13 +349,6 @@ def criar_tabela_vendas_mensais_por/produto(data, fornecedor, ano):
     return tabela
 
 def main():
-    # Botão para limpar cache
-    if st.button("Limpar Cache"):
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.rerun()
-
-    auto_reload()
 
     st.markdown(
         """
@@ -378,7 +371,7 @@ def main():
         </div>
         """,
         unsafe_allow_html=True)
-    data_inicial = st.date_input("Data Inicial", value=date(2024, 4, 7))
+    data_inicial = st.date_input("Data Inicial", value=date(2024,1, 1))
     data_final = st.date_input("Data Final", value=date(2025, 5, 14))
 
     if data_inicial > data_final:
