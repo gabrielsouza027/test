@@ -54,8 +54,7 @@ SUPABASE_CONFIG = {
     }
 }
 
-# Função para buscar dados do Supabase com paginação e retry
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+
 def fetch_supabase_page(table, offset, limit, filter_query=None):
     try:
         query = supabase.table(table).select("*")
