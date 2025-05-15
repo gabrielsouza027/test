@@ -40,7 +40,7 @@ except Exception as e:
     st.stop()
 
 # Configuração do cache (TTL de 60 segundos)
-cache = TTLCache(maxsize=10, ttl=60)
+cache = TTLCache(maxsize=10, ttl=300)
 
 # Configuração das tabelas e colunas esperadas
 SUPABASE_CONFIG = {
