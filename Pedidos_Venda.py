@@ -254,7 +254,7 @@ def main():
                                 search_client.lower() in str(p.get('CLIENTE', '')).lower() or 
                                 search_client.lower() in str(p.get('NUMPED', '')).lower()]
             if search_seller:
-                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENI', '')).lower()]
+                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENDEDOR', '')).lower()]
             if st.session_state.selected_filiais:
                 pedidos_list = [p for p in pedidos_list if str(p.get('CODFILIAL', '')) in st.session_state.selected_filiais]
             if not (show_liberado and show_montado and show_faturado and show_cancelado):
@@ -292,8 +292,8 @@ def main():
                     """, unsafe_allow_html=True)
                 with col6:
                     st.markdown(f"""
-                        **Cód. Veículo:** {pedido.get('CODIGO_VEI', 'N/A')}  
-                        **Vendedor:** {pedido.get('NOME_VENI', 'N/A')}  
+                        **Cód. Veículo:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
+                        **Vendedor:** {pedido.get('NOME_VENDEDOR', 'N/A')}  
                         **Nº Nota:** {pedido.get('NUMNOTA', 'N/A')}  
                         **Cód. Filial:** {pedido.get('CODFILIAL', 'N/A')}  
                         **Observação:** {pedido.get('OBS', 'N/A')}  
