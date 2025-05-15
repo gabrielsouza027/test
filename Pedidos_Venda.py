@@ -40,14 +40,14 @@ except Exception as e:
     st.stop()
 
 # Configuração do cache (TTL de 60 segundos)
-cache = TTLCache(maxsize=10, ttl=300)
+cache = TTLCache(maxsize=10, ttl=60)
 
 # Configuração das tabelas e colunas esperadas
 SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO_PRODUTO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VEI', 'NOME_VENI', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
@@ -203,7 +203,7 @@ def main():
         'MUNICIPIO': 'first', 'QT': 'sum', 'PVENDA': 'mean'
     }).reset_index()
 
-    df_grouped['valor_total'] =   df_grouped['QT'] * df_grouped['PVENDA']
+    df_grouped['valor_total'] = df_grouped['QT'] * df_grouped['PVENDA']
     pedidos_dict = df_grouped.to_dict('records')
     pedidos_list_full = pedidos_dict
     filiais_unicas = sorted(set(df_grouped['CODFILIAL'].dropna().astype(str)))
@@ -294,8 +294,8 @@ def main():
                     """, unsafe_allow_html=True)
                 with col6:
                     st.markdown(f"""
-                        **Cód. Vendedor:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
-                        **Vendedor:** {pedido.get('NOME_VENDEDOR', 'N/A')}  
+                        **Cód. Veículo:** {pedido.get('CODIGO_VEI', 'N/A')}  
+                        **Vendedor:** {pedido.get('NOME_VENI', 'N/A')}  
                         **Nº Nota:** {pedido.get('NUMNOTA', 'N/A')}  
                         **Cód. Filial:** {pedido.get('CODFILIAL', 'N/A')}  
                         **Observação:** {pedido.get('OBS', 'N/A')}  
@@ -304,7 +304,7 @@ def main():
                         **Valor Total:** R$ {pedido.get('valor_total', 0):,.2f}
                     """, unsafe_allow_html=True)
                 st.subheader("Produtos")
-                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO_PRODUTO', 'QT', 'PVENDA', 'POSICAO']]
+                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO', 'QT', 'PVENDA', 'POSICAO']]
                 produtos_df["VALOR_TOTAL_ITEM"] = produtos_df["QT"] * produtos_df["PVENDA"]
                 produtos_df = produtos_df.rename(columns={
                     "CODPROD": "Código Produto", "DESCRICAO": "Descrição", "QT": "Quantidade",
