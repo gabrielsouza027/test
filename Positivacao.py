@@ -50,7 +50,6 @@ def formatar_valor(valor):
 
 # Função principal
 def main():
-    st.set_page_config(page_title="Relatório de Vendas e Positivação por Vendedor", layout="wide")
     
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
