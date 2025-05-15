@@ -7,7 +7,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import os
 
 # Configuração do cache
-cache = TTLCache(maxsize=1, ttl=180)
+cache = TTLCache(maxsize=1, ttl=900)
 
 # Conexão com o Supabase usando variáveis de ambiente
 @st.cache_resource
