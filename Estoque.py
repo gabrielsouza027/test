@@ -49,12 +49,14 @@ SUPABASE_CONFIG = {
         "table": "VWSOMELIER",
         "columns": ["CODPROD", "QT", "DESCRICAO_1", "DESCRICAO_2", "DATA"],
         "date_column": "DATA",
+        "filial_filter": None  # Removido, pois CODFILIAL não existe em VWSOMELIER
     },
     "estoque": {
         "table": "ESTOQUE",
         "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
                     "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"],
         "date_column": "DTULTENT",
+        "filial_filter": "CODFILIAL=in.('1','2')"
     }
 }
 
@@ -85,7 +87,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         raise
 
 # Função para buscar todas as páginas de uma tabela assincronamente
-async def fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=None):
+async def fetch_all_pages(table, limit=10000, max_pages=500, filter_query=None):  # Reduzido max_pages para 500
     all_data = []
     async with aiohttp.ClientSession() as session:
         tasks = []
@@ -121,11 +123,14 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
             filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
 
         # Executar busca assíncrona
-        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=filter_query))
+        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=500, filter_query=filter_query))
 
         if all_data:
             # Converter para Polars DataFrame
             df = pl.DataFrame(all_data)
+            
+            # Log das colunas retornadas para debug
+            logger.info(f"Colunas retornadas da tabela {table}: {df.columns}")
             
             # Verificar colunas esperadas
             missing_columns = [col for col in columns_expected if col not in df.columns]
