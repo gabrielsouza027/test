@@ -46,7 +46,7 @@ def get_headers():
 @st.cache_data(show_spinner=False, ttl=300)
 def carregar_dados():
     all_data = []
-    page_size = 500  # Tamanho do lote por requisição
+    page_size = 10  # Tamanho do lote por requisição
 
     try:
         for table in SUPABASE_TABLES:
