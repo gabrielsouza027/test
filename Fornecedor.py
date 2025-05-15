@@ -112,10 +112,9 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
     date_column = config["date_column"]
 
     try:
-        # Construir filtro de data
+        # Construir filtro de data (using text comparison since DATA is text)
         data_inicial_str = data_inicial.strftime('%Y-%m-%d')
         data_final_str = data_final.strftime('%Y-%m-%d')
-        # Simplified filter query to ensure compatibility
         filter_query = f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
         logger.info(f"Filter query: {filter_query}")
 
@@ -133,20 +132,24 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 _cache[key] = pl.DataFrame()
                 return pl.DataFrame()
 
+            # Debug: Display raw data fetched from Supabase
+            st.write("Dados brutos retornados pelo Supabase:")
+            st.json(all_data[:10])  # Show first 10 rows for debugging
+
             # Garantir tipos de dados
             df = df.with_columns([
-                # Convert DATA to datetime, handling string format
+                # Convert DATA from text to date
                 pl.col('DATA').str.to_date(format="%Y-%m-%d", strict=False).alias('DATA'),
                 pl.col('QT').cast(pl.Float64, strict=False).fill_null(0),
                 pl.col('PVENDA').cast(pl.Float64, strict=False).fill_null(0)
             ])
 
-            # Filter out rows where DATA conversion failed (null dates)
+            # Filter out rows where DATA conversion failed
             df = df.filter(pl.col('DATA').is_not_null())
 
-            # Apply date range filter in Polars after fetching
+            # Apply date range filter in Polars
             df = df.filter(
-                (pl.col('DATA') >= data_inicial) & (pl.col('DATA') <= data_final)
+                (pl.col('DATA') >= data_inicial.date()) & (pl.col('DATA') <= data_final.date())
             )
 
             # Validar dados
