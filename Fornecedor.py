@@ -354,13 +354,11 @@ def main():
             ).agg(
                 QT=pl.col('QT').sum()
             ).sort(['PRODUTO'])
-            
             pivot_produtos = pivot_produtos.select([
                 'PRODUTO', 'CODPROD', 'VENDEDOR', 'CODIGOVENDEDOR', 'CLIENTE', 'CODCLI', 'FORNECEDOR', 'QT'
             ])
-            
             pivot_produtos_pandas = pivot_produtos.to_pandas()
-            
+            # Configuração do Grid
             gb_produtos = GridOptionsBuilder.from_dataframe(pivot_produtos_pandas)
             gb_produtos.configure_default_column(
                 sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
