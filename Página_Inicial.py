@@ -5,11 +5,9 @@ from datetime import datetime, timedelta
 import locale
 import plotly.express as px
 import logging
-import concurrent.futures
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configurar logging
-logging.basicConfig(level=logging.DEBUG)  # Aumentado para DEBUG para mais detalhes
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Definir o local para a formatação monetária
@@ -20,7 +18,6 @@ except locale.Error:
     locale.setlocale(locale.LC_ALL, '')
 
 # Configuração das URLs e tabelas do Supabase
-# Removido filtros restritivos temporariamente para testar
 SUPABASE_TABLES = [
     {
         "table_name": "PCPEDC",
@@ -45,74 +42,67 @@ def get_headers():
         st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
         st.stop()
 
-# Função para buscar dados de uma tabela com retry
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def fetch_table_data(table, page_size, offset):
-    table_name = table["table_name"]
-    url = table["url"]
-    headers = get_headers()
-    headers["Range"] = f"{offset}-{offset + page_size - 1}"
-    
-    try:
-        logger.debug(f"Fazendo requisição para {url} com offset {offset}")
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        logger.debug(f"Resposta recebida: {len(data)} registros, status {response.status_code}")
-        return data
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Erro ao buscar dados da tabela {table_name}, offset {offset}: {e}, resposta: {response.text if 'response' in locals() else 'sem resposta'}")
-        raise
-
-# Função para carregar dados do Supabase com cache, paginação e paralelismo
-@st.cache_data(show_spinner=False, ttl=3600)
-def carregar_dados(_cache_key=datetime.now().strftime('%Y%m%d%H%M')):  # Cache_key para invalidar periodicamente
+# Função para obter dados do Supabase com cache e paginação
+@st.cache_data(show_spinner=False, ttl=300)
+def carregar_dados():
     all_data = []
-    page_size = 2000  # Mantido para respostas rápidas
+    page_size = 500  # Tamanho do lote por requisição
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            for table in SUPABASE_TABLES:
-                table_name = table["table_name"]
-                logger.info(f"Iniciando carregamento da tabela {table_name}")
+        for table in SUPABASE_TABLES:
+            table_name = table["table_name"]
+            url = table["url"]
+            logger.info(f"Carregando dados da tabela {table_name}")
+            
+            offset = 0
+            while True:
+                # Define o intervalo para a paginação
+                headers = get_headers()
+                headers["Range"] = f"{offset}-{offset + page_size - 1}"
                 
-                offset = 0
-                while True:
-                    futures.append(executor.submit(fetch_table_data, table, page_size, offset))
-                    offset += page_size
-                    if offset >= page_size * 10:  # Limite ajustável
-                        logger.info(f"Limite de páginas atingido para {table_name}")
-                        break
-
-            for future in concurrent.futures.as_completed(futures):
+                # Faz a requisição
                 try:
-                    data = future.result()
-                    if data:
-                        all_data.extend(data)
-                except Exception as e:
-                    logger.error(f"Erro em uma requisição: {e}")
-                    continue
+                    response = requests.get(url, headers=headers, timeout=30)
+                    response.raise_for_status()  # Levanta exceção para erros HTTP
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
+                    st.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
+                    return pd.DataFrame()
 
+                data = response.json()
+                if not data:  # Se não houver mais dados, interrompe o loop
+                    logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
+                    break
+                
+                # Adiciona os dados da página atual à lista
+                all_data.extend(data)
+                offset += page_size  # Avança para a próxima página
+                logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
+
+        # Converte para DataFrame
         if all_data:
             data = pd.DataFrame(all_data)
-            logger.debug(f"Colunas retornadas: {data.columns.tolist()}")
+            # Verificar se as colunas necessárias existem
             required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
             missing_columns = [col for col in required_columns if col not in data.columns]
             if missing_columns:
                 logger.error(f"Colunas ausentes nos dados: {missing_columns}")
-                st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}. Verifique a estrutura da tabela {SUPABASE_TABLES[0]['table_name']}.")
+                st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
                 return pd.DataFrame()
 
+            # Garantir tipos de dados
             data['PVENDA'] = pd.to_numeric(data['PVENDA'], errors='coerce').fillna(0).astype('float32')
             data['QT'] = pd.to_numeric(data['QT'], errors='coerce').fillna(0).astype('int32')
             data['CODFILIAL'] = data['CODFILIAL'].astype(str)
             data['NUMPED'] = data['NUMPED'].astype(str)
+
+            # Calcular VLTOTAL como PVENDA * QT
             data['VLTOTAL'] = data['PVENDA'] * data['QT']
             
-            # Aplicar filtro de filiais no Python (já que removido da URL)
+            # Filtrar apenas filiais 1 e 2
             data = data[data['CODFILIAL'].isin(['1', '2'])].copy()
             
+            # Converter DATA_PEDIDO para datetime
             data['DATA_PEDIDO'] = pd.to_datetime(data['DATA_PEDIDO'], errors='coerce')
             if data['DATA_PEDIDO'].isnull().any():
                 logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
@@ -121,13 +111,13 @@ def carregar_dados(_cache_key=datetime.now().strftime('%Y%m%d%H%M')):  # Cache_k
             
             logger.info(f"Dados carregados com sucesso: {len(data)} registros")
         else:
-            logger.error("Nenhum dado retornado pela API. Possíveis causas: tabela vazia, filtros incorretos ou erro de autenticação.")
-            st.error("Nenhum dado retornado pela API. Verifique: 1) Se a tabela PCPEDC contém dados; 2) Se as chaves SUPABASE_URL e SUPABASE_KEY estão corretas; 3) Se a tabela tem as colunas esperadas (PVENDA, QT, CODFILIAL, DATA_PEDIDO, NUMPED).")
+            logger.warning("Nenhum dado retornado pela API")
+            st.error("Nenhum dado retornado pela API.")
             data = pd.DataFrame()
 
     except Exception as e:
         logger.error(f"Erro geral ao processar dados: {e}")
-        st.error(f"Erro ao processar dados: {e}. Verifique a configuração do Supabase e a conexão com a API.")
+        st.error(f"Erro ao processar dados: {e}")
         data = pd.DataFrame()
 
     return data
@@ -163,6 +153,8 @@ def formatar_valor(valor):
         return f"R$ {valor:,.2f}"
 
 def main():
+
+    
     st.markdown("""
     <style>
         .st-emotion-cache-1ibsh2c {
@@ -208,7 +200,7 @@ def main():
         data = carregar_dados()
     
     if data.empty:
-        st.error("Não foi possível carregar os dados. Verifique as configurações da API, a existência de dados na tabela PCPEDC, ou tente novamente.")
+        st.error("Não foi possível carregar os dados. Verifique as configurações da API ou tente novamente.")
         return
 
     col1, col2 = st.columns(2)
@@ -371,11 +363,11 @@ def main():
     st.subheader("Comparação de Vendas por Mês e Ano")
 
     # Seletores de data
-    col_data1, col2 = st.columns(2)
+    col_data1, col_data2 = st.columns(2)
     with col_data1:
         default_inicial = data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else pd.to_datetime('2024-01-01')
         data_inicial = st.date_input("Data Inicial", value=default_inicial, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.empty else None)
-    with col2:
+    with col_data2:
         data_final = st.date_input("Data Final", value=hoje, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.empty else None)
 
     if data_inicial > data_final:
@@ -391,7 +383,7 @@ def main():
         return
 
     # Adicionar colunas de ano e mês
-    df_periodo['Ano'] = df_periodo['DATA_PEDIDO'].dt.year.astype(str)
+    df_periodo['Ano'] = df_periodo['DATA_PEDIDO'].dt.year.astype(str)  # Converter para string para evitar problemas no Plotly
     df_periodo['Mês'] = df_periodo['DATA_PEDIDO'].dt.month
 
     # Agrupar por ano e mês
