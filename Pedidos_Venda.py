@@ -254,8 +254,9 @@ def main():
                                 search_client.lower() in str(p.get('CLIENTE', '')).lower() or 
                                 search_client.lower() in str(p.get('NUMPED', '')).lower()]
             if search_seller:
-                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENDEDOR', '')).lower()]
-                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('CODIGO_VENDEDOR', '')).lower()]
+                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENDEDOR', '')).lower() or
+                                search_seller.lower() in str(p.get('CODIGO_VENDEDOR', '')).lower()]
+
             if st.session_state.selected_filiais:
                 pedidos_list = [p for p in pedidos_list if str(p.get('CODFILIAL', '')) in st.session_state.selected_filiais]
             if not (show_liberado and show_montado and show_faturado and show_cancelado):
