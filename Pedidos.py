@@ -56,7 +56,7 @@ def formatar_valor(valor):
 
 # Função para buscar dados do Supabase com cache e paginação otimizada
 @st.cache_data(show_spinner=False, ttl=120)
-def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-05-14"):
+def get_data_from_supabase(_caches, data_inicial="2025-01-01", data_final="2025-05-15"):
     data = {}
     for table_config in SUPABASE_CONFIG:
         table_name = table_config["table_name"]
@@ -171,26 +171,55 @@ def main():
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
-    # Custom CSS para estilização responsiva
+    # Custom CSS para estilização responsiva e fundo com gradiente
     st.markdown("""
     <style>
+        /* Gradient background for the entire app */
+        body, .stApp {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffffff;
+            font-family: 'Arial', sans-serif;
+        }
+
         /* General table styling */
         .ranking-table {
             width: 100%;
             border-collapse: collapse;
             margin: 20px 0;
             font-size: clamp(14px, 2vw, 16px);
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+            overflow: hidden;
         }
         .ranking-table th, .ranking-table td {
             padding: 12px;
             text-align: center;
             border: 1px solid #ddd;
+            color: #333;
+        }
+        .ranking-table th {
+            background-color: #f0f0f0;
+            font-weight: bold;
         }
         .ranking-table tr:nth-child(even) {
             background-color: #f9f9f9;
         }
         .ranking-table tr:hover {
-            background-color: #ddd;
+            background-color: #e0e0e0;
+        }
+
+        /* Highlight top 3 ranks */
+        .rank-1 {
+            background-color: #FFD700 !important; /* Gold */
+            font-weight: bold;
+        }
+        .rank-2 {
+            background-color: #C0C0C0 !important; /* Silver */
+            font-weight: bold;
+        }
+        .rank-3 {
+            background-color: #CD7F32 !important; /* Bronze */
+            font-weight: bold;
         }
 
         /* Card styling */
@@ -233,6 +262,9 @@ def main():
             align-items: center;
             width: 100%;
             margin-top: 20px;
+            background-color: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 10px;
         }
         .total-item {
             font-size: clamp(18px, 3vw, 22px);
@@ -253,6 +285,8 @@ def main():
             display: block;
             border: 1px solid #ddd;
             width: 100%;
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
         }
         table {
             width: 100%;
@@ -262,6 +296,12 @@ def main():
             padding: 8px;
             text-align: left;
             border-bottom: 1px solid #ddd;
+            color: #333;
+        }
+
+        /* Ensure text readability on gradient background */
+        h1, h2, h3, .stMarkdown, .stWarning, .stSelectbox label, .stDateInput label {
+            color: #ffffff !important;
         }
 
         /* Responsive adjustments */
@@ -397,10 +437,10 @@ def main():
                             </div>
                             """, unsafe_allow_html=True)
             else:
-                st.warning("Nenhum dado disponível para exHabía pedidos por rota.")
+                st.warning("Nenhum dado disponível para exibir pedidos por rota.")
 
         with col2:
-            st.markdown("### Pedidos Conferidos por Funcionário")
+            st.markdown("### Ranking de Conferentes")
             data_inicial = st.date_input("Data Inicial", value=hoje, key="data_inicial")
             data_final = st.date_input("Data Final", value=hoje, key="data_final")
 
@@ -410,10 +450,51 @@ def main():
 
             filtered_data = daily_data[(daily_data['DIA'] >= data_inicial) & (daily_data['DIA'] <= data_final)] if not daily_data.empty else pd.DataFrame()
             if not filtered_data.empty:
-                filtered_data_sorted = filtered_data.sort_values(by=['DIA', 'PEDIDOS CONFERIDOS'], ascending=[True, False]).reset_index(drop=True)
-                # Format DIA as string to avoid serialization issues
-                filtered_data_sorted['DIA'] = filtered_data_sorted['DIA'].astype(str)
-                st.markdown('<div class="scrollable-table">' + filtered_data_sorted.to_html(index=False, escape=False, classes="ranking-table") + '</div>', unsafe_allow_html=True)
+                # Check if the date range is a single day
+                is_single_day = data_inicial == data_final
+
+                if is_single_day:
+                    # For a single day, show daily details with ranking
+                    filtered_data_sorted = filtered_data.sort_values(by='PEDIDOS CONFERIDOS', ascending=False).reset_index(drop=True)
+                    # Add ranking column
+                    filtered_data_sorted['RANKING'] = filtered_data_sorted.index + 1
+                    # Reorder columns to put RANKING first
+                    filtered_data_sorted = filtered_data_sorted[['RANKING', 'CONFERENTE', 'DIA', 'PEDIDOS CONFERIDOS']]
+                    # Format DIA as string to avoid serialization issues
+                    filtered_data_sorted['DIA'] = filtered_data_sorted['DIA'].astype(str)
+                    # Apply rank styling
+                    def apply_rank_style(row):
+                        rank = row['RANKING']
+                        if rank == 1:
+                            return ['background-color: #FFD700; font-weight: bold'] * len(row)
+                        elif rank == 2:
+                            return ['background-color: #C0C0C0; font-weight: bold'] * len(row)
+                        elif rank == 3:
+                            return ['background-color: #CD7F32; font-weight: bold'] * len(row)
+                        return [''] * len(row)
+                    # Apply the styling to the DataFrame
+                    styled_df = filtered_data_sorted.style.apply(apply_rank_style, axis=1)
+                    st.markdown('<div class="scrollable-table">' + styled_df.to_html(index=False, escape=False, classes="ranking-table") + '</div>', unsafe_allow_html=True)
+                else:
+                    # For multiple days, show total sum per conferente with ranking
+                    total_per_conferente = filtered_data.groupby('CONFERENTE')['PEDIDOS CONFERIDOS'].sum().reset_index()
+                    total_per_conferente = total_per_conferente.sort_values(by='PEDIDOS CONFERIDOS', ascending=False).reset_index(drop=True)
+                    # Add ranking column
+                    total_per_conferente['RANKING'] = total_per_conferente.index + 1
+                    # Reorder columns
+                    total_per_conferente = total_per_conferente[['RANKING', 'CONFERENTE', 'PEDIDOS CONFERIDOS']]
+                    # Apply rank styling
+                    def apply_rank_style(row):
+                        rank = row['RANKING']
+                        if rank == 1:
+                            return ['background-color: #FFD700; font-weight: bold'] * len(row)
+                        elif rank == 2:
+                            return ['background-color: #C0C0C0; font-weight: bold'] * len(row)
+                        elif rank == 3:
+                            return ['background-color: #CD7F32; font-weight: bold'] * len(row)
+                        return [''] * len(row)
+                    styled_df = total_per_conferente.style.apply(apply_rank_style, axis=1)
+                    st.markdown('<div class="scrollable-table">' + styled_df.to_html(index=False, escape=False, classes="ranking-table") + '</div>', unsafe_allow_html=True)
             else:
                 st.warning("Nenhum dado encontrado para o intervalo de datas selecionado.")
 
