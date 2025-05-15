@@ -47,7 +47,7 @@ SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VEI', 'NOME_VENI', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
@@ -198,7 +198,7 @@ def main():
     # Processar dados (agrupar por NUMPED)
     df_grouped = df_pedidos.groupby('NUMPED').agg({
         'created_at': 'first', 'NUMCAR': 'first', 'DATA': 'first', 'CODCLI': 'first', 'CLIENTE': 'first',
-        'CODIGO_VEI': 'first', 'NOME_VENI': 'first', 'NUMNOTA': 'first', 'OBS': 'first',
+        'CODIGO_VENDEDOR': 'first', 'NOME_VENDEDOR': 'first', 'NUMNOTA': 'first', 'OBS': 'first',
         'OBS1': 'first', 'OBS2': 'first', 'POSICAO': 'first', 'CODFILIAL': 'first',
         'MUNICIPIO': 'first', 'QT': 'sum', 'PVENDA': 'mean'
     }).reset_index()
