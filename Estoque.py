@@ -1,21 +1,14 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 import datetime
-from cachetools import TTLCache
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-import time
 import logging
-import concurrent.futures
-from tenacity import retry, stop_after_attempt, wait_exponential
+import time
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Configuração dos caches (TTL de 300 segundos)
-cache_vendas = TTLCache(maxsize=1, ttl=300)
-cache_estoque = TTLCache(maxsize=1, ttl=300)
+logger = logging.getLogger("EstoqueApp")
 
 # Configuração do Supabase usando secrets do Streamlit Cloud
 try:
@@ -30,9 +23,9 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("Erro: SUPABASE_URL ou SUPABASE_KEY não estão definidos.")
     st.stop()
 
-# Inicializar cliente Supabase
+# Inicializar cliente Supabase com timeout
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(timeout=30))
 except Exception as e:
     st.error(f"Erro ao inicializar o cliente Supabase: {e}")
     st.stop()
@@ -46,14 +39,14 @@ SUPABASE_CONFIG = {
     },
     "estoque": {
         "table": "ESTOQUE",
-        "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
+        "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV",
                     "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"],
         "date_column": "DTULTENT"
     }
 }
 
-
 def fetch_supabase_page(table, offset, limit, filter_query=None):
+    """Busca uma página de dados do Supabase."""
     try:
         query = supabase.table(table).select("*")
         if filter_query:
@@ -71,87 +64,70 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
         raise
 
-
 @st.cache_data(show_spinner=False, ttl=300)
-def fetch_supabase_data(_cache, table, columns_expected, date_column=None, last_update=None):
+def fetch_supabase_data(table, columns_expected, date_column=None, last_update=None):
+    """Busca dados do Supabase com cache."""
     key = f"{table}_{last_update or 'full'}"
-    if key in _cache:
-        logger.info(f"Dados da tabela {table} recuperados do cache")
-        return _cache[key]
+    logger.info(f"Buscando dados da tabela {table}, chave: {key}")
 
     try:
         all_data = []
-        limit = 1000
-        max_pages = 10
+        limit = 1000  # Aumentado para reduzir número de requisições
+        max_pages = 10  # Ajustado para evitar excesso de chamadas
         filters = []
 
         if last_update and date_column:
             filters.append((date_column, "gte", last_update.strftime('%Y-%m-%d')))
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [
-                executor.submit(fetch_supabase_page, table, offset, limit, filters)
-                for offset in range(0, limit * max_pages, limit)
-            ]
-
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    data = future.result()
-                    if not data:
-                        break
-                    all_data.extend(data)
-                except Exception as e:
-                    logger.error(f"Erro em uma requisição: {e}")
+        for offset in range(0, limit * max_pages, limit):
+            data = fetch_supabase_page(table, offset, limit, filters)
+            if not data:
+                break
+            all_data.extend(data)
 
         if not all_data:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
             st.warning(f"Nenhum dado retornado da tabela {table}.")
-            _cache[key] = pd.DataFrame()
-            return _cache[key]
+            return pd.DataFrame()
 
         df = pd.DataFrame(all_data)
         missing_columns = [col for col in columns_expected if col not in df.columns]
         if missing_columns:
             st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
             logger.error(f"Colunas ausentes: {missing_columns}")
-            _cache[key] = pd.DataFrame()
             return pd.DataFrame()
 
         if date_column in df.columns:
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             df = df.dropna(subset=[date_column])
 
-        _cache[key] = df
         logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
         return df
 
     except Exception as e:
         st.error(f"Erro ao buscar dados da tabela {table}: {e}")
         logger.error(f"Erro geral: {e}")
-        _cache[key] = pd.DataFrame()
         return pd.DataFrame()
 
-
 def fetch_vendas_data():
+    """Busca dados de vendas."""
     config = SUPABASE_CONFIG["vendas"]
     last_update = st.session_state.get('last_vendas_update', None)
     df = fetch_supabase_data(
-        cache_vendas,
-        config["table"],
-        config["columns"],
+        table=config["table"],
+        columns_expected=config["columns"],
         date_column=config["date_column"],
         last_update=last_update
     )
     return df
 
-
 def fetch_estoque_data():
+    """Busca dados de estoque."""
     config = SUPABASE_CONFIG["estoque"]
     last_update = st.session_state.get('last_estoque_update', None)
     df = fetch_supabase_data(
-        cache_estoque,
-        config["table"],
-        config["columns"],
+        table=config["table"],
+        columns_expected=config["columns"],
         date_column=config["date_column"],
         last_update=last_update
     )
@@ -166,20 +142,25 @@ def fetch_estoque_data():
             st.session_state['last_estoque_update'] = df[config["date_column"]].max()
     return df
 
-
 def auto_reload():
+    """Recarrega os dados automaticamente a cada 10 minutos."""
     if 'last_reload' not in st.session_state:
         st.session_state.last_reload = time.time()
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 120:
+    if current_time - st.session_state.last_reload >= 600:  # 10 minutos
         st.session_state.last_reload = current_time
         st.cache_data.clear()
         st.rerun()
 
-
 def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
+
+    # Botão para recarregar manualmente
+    if st.button("🔄 Atualizar Dados"):
+        st.cache_data.clear()
+        st.rerun()
+
     auto_reload()
 
     data_final = datetime.date.today()
@@ -255,7 +236,6 @@ def main():
             st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
 
             sem_estoque_df_renomeado = sem_estoque_df[sem_estoque_df['QT_ESTOQUE'].isna() | (sem_estoque_df['QT_ESTOQUE'] <= 0)]
-
             sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
                 'CODPROD': 'CÓDIGO PRODUTO',
                 'NOME_PRODUTO': 'NOME DO PRODUTO',
@@ -284,7 +264,6 @@ def main():
             df_sem_estoque_display['ESTOQUE TOTAL'] = df_sem_estoque_display['ESTOQUE TOTAL'].apply(lambda x: f"{x:,.0f}")
 
             AgGrid(df_sem_estoque_display, gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, height=300, theme='streamlit')
-
 
 if __name__ == "__main__":
     main()
