@@ -57,6 +57,29 @@ SUPABASE_CONFIG = {
     }
 }
 
+# Função para verificar se há dados na tabela (sem filtros)
+async def check_data_existence(table):
+    try:
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Range": "0-9"  # Buscar apenas os primeiros 10 registros
+        }
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=30) as response:
+                if response.status != 200:
+                    content = await response.text()
+                    logger.error(f"Erro ao verificar dados em {table}: {content}")
+                    return False, content
+                data = await response.json()
+                logger.info(f"Verificação de dados em {table}: {len(data)} registros encontrados")
+                return len(data) > 0, data
+    except Exception as e:
+        logger.error(f"Erro ao verificar dados em {table}: {str(e)}")
+        return False, str(e)
+
 # Função para buscar dados do Supabase com paginação e retry (assíncrona)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def fetch_supabase_page_async(session, table, offset, limit, filter_query=None):
@@ -203,9 +226,26 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    # Definir as datas de início e fim para os últimos 2 meses
-    data_final = datetime.date.today()  # 15/05/2025
-    data_inicial = data_final - datetime.timedelta(days=60)  # 16/03/2025
+    # Verificar existência de dados na tabela VWSOMELIER
+    with st.spinner("Verificando existência de dados em VWSOMELIER..."):
+        has_vendas, vendas_info = asyncio.run(check_data_existence("VWSOMELIER"))
+    
+    if not has_vendas:
+        st.error(f"A tabela VWSOMELIER não contém dados ou está inacessível. Detalhes: {vendas_info}")
+        return
+    else:
+        st.info(f"A tabela VWSOMELIER contém dados. Primeiros registros: {vendas_info[:2]}")
+
+    # Seletor de datas
+    st.markdown("### Filtro de Período")
+    data_final = st.date_input("Data Final", value=datetime.date.today(), max_value=datetime.date.today())
+    data_inicial = st.date_input("Data Inicial", value=data_final - datetime.timedelta(days=60))
+
+    if data_inicial > data_final:
+        st.error("A Data Inicial não pode ser maior que a Data Final.")
+        return
+
+    logger.info(f"Buscando dados de {data_inicial} até {data_final}")
 
     # Buscar dados de vendas (VW_SOMELIER)
     with st.spinner("Carregando dados de vendas..."):
