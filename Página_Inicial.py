@@ -9,7 +9,7 @@ import concurrent.futures
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configurar logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)  # Aumentado para DEBUG para mais detalhes
 logger = logging.getLogger(__name__)
 
 # Definir o local para a formatação monetária
@@ -20,9 +20,7 @@ except locale.Error:
     locale.setlocale(locale.LC_ALL, '')
 
 # Configuração das URLs e tabelas do Supabase
-# Adicionado filtro na URL para filiais 1 e 2 e período relevante
-today = pd.to_datetime('2025-05-13').normalize()
-start_date = (today - timedelta(days=365)).strftime('%Y-%m-%d')  # Desde o ano anterior
+# Removido filtros restritivos temporariamente para testar
 SUPABASE_TABLES = [
     {
         "table_name": "PCPEDC",
@@ -31,7 +29,7 @@ SUPABASE_TABLES = [
     # Adicione mais tabelas aqui, se necessário
     # {
     #     "table_name": "VWSOMELIER",
-    #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*&CODFILIAL=in.('1','2')&DATA_PEDIDO=gte.{start_date}"
+    #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*"
     # },
 ]
 
@@ -56,23 +54,23 @@ def fetch_table_data(table, page_size, offset):
     headers["Range"] = f"{offset}-{offset + page_size - 1}"
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)  # Timeout reduzido para 15s
+        logger.debug(f"Fazendo requisição para {url} com offset {offset}")
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
-        logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, offset {offset}")
+        logger.debug(f"Resposta recebida: {len(data)} registros, status {response.status_code}")
         return data
     except requests.exceptions.RequestException as e:
-        logger.error(f"Erro ao buscar dados da tabela {table_name}, offset {offset}: {e}")
+        logger.error(f"Erro ao buscar dados da tabela {table_name}, offset {offset}: {e}, resposta: {response.text if 'response' in locals() else 'sem resposta'}")
         raise
 
 # Função para carregar dados do Supabase com cache, paginação e paralelismo
-@st.cache_data(show_spinner=False, ttl=300)  # Cache de 1 hora
-def carregar_dados(_start_date=start_date):  # Adicionado _start_date para invalidar cache se mudar
+@st.cache_data(show_spinner=False, ttl=3600)
+def carregar_dados(_cache_key=datetime.now().strftime('%Y%m%d%H%M')):  # Cache_key para invalidar periodicamente
     all_data = []
-    page_size = 2000  # Reduzido para 500 para respostas mais rápidas
+    page_size = 500  # Mantido para respostas rápidas
 
     try:
-        # Usar ThreadPoolExecutor para requisições paralelas
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
             for table in SUPABASE_TABLES:
@@ -83,11 +81,10 @@ def carregar_dados(_start_date=start_date):  # Adicionado _start_date para inval
                 while True:
                     futures.append(executor.submit(fetch_table_data, table, page_size, offset))
                     offset += page_size
-                    # Parar após 10 páginas para evitar sobrecarga (ajustar conforme necessário)
-                    if offset >= page_size * 10:
+                    if offset >= page_size * 10:  # Limite ajustável
+                        logger.info(f"Limite de páginas atingido para {table_name}")
                         break
 
-            # Coletar resultados
             for future in concurrent.futures.as_completed(futures):
                 try:
                     data = future.result()
@@ -97,30 +94,25 @@ def carregar_dados(_start_date=start_date):  # Adicionado _start_date para inval
                     logger.error(f"Erro em uma requisição: {e}")
                     continue
 
-        # Converte para DataFrame
         if all_data:
             data = pd.DataFrame(all_data)
-            # Verificar se as colunas necessárias existem
+            logger.debug(f"Colunas retornadas: {data.columns.tolist()}")
             required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
             missing_columns = [col for col in required_columns if col not in data.columns]
             if missing_columns:
                 logger.error(f"Colunas ausentes nos dados: {missing_columns}")
-                st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
+                st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}. Verifique a estrutura da tabela {SUPABASE_TABLES[0]['table_name']}.")
                 return pd.DataFrame()
 
-            # Garantir tipos de dados
             data['PVENDA'] = pd.to_numeric(data['PVENDA'], errors='coerce').fillna(0).astype('float32')
             data['QT'] = pd.to_numeric(data['QT'], errors='coerce').fillna(0).astype('int32')
             data['CODFILIAL'] = data['CODFILIAL'].astype(str)
             data['NUMPED'] = data['NUMPED'].astype(str)
-
-            # Calcular VLTOTAL como PVENDA * QT
             data['VLTOTAL'] = data['PVENDA'] * data['QT']
             
-            # Filtrar apenas filiais 1 e 2 (redundante devido ao filtro na URL, mas mantido por segurança)
+            # Aplicar filtro de filiais no Python (já que removido da URL)
             data = data[data['CODFILIAL'].isin(['1', '2'])].copy()
             
-            # Converter DATA_PEDIDO para datetime
             data['DATA_PEDIDO'] = pd.to_datetime(data['DATA_PEDIDO'], errors='coerce')
             if data['DATA_PEDIDO'].isnull().any():
                 logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
@@ -129,13 +121,13 @@ def carregar_dados(_start_date=start_date):  # Adicionado _start_date para inval
             
             logger.info(f"Dados carregados com sucesso: {len(data)} registros")
         else:
-            logger.warning("Nenhum dado retornado pela API")
-            st.error("Nenhum dado retornado pela API.")
+            logger.error("Nenhum dado retornado pela API. Possíveis causas: tabela vazia, filtros incorretos ou erro de autenticação.")
+            st.error("Nenhum dado retornado pela API. Verifique: 1) Se a tabela PCPEDC contém dados; 2) Se as chaves SUPABASE_URL e SUPABASE_KEY estão corretas; 3) Se a tabela tem as colunas esperadas (PVENDA, QT, CODFILIAL, DATA_PEDIDO, NUMPED).")
             data = pd.DataFrame()
 
     except Exception as e:
         logger.error(f"Erro geral ao processar dados: {e}")
-        st.error(f"Erro ao processar dados: {e}")
+        st.error(f"Erro ao processar dados: {e}. Verifique a configuração do Supabase e a conexão com a API.")
         data = pd.DataFrame()
 
     return data
@@ -216,7 +208,7 @@ def main():
         data = carregar_dados()
     
     if data.empty:
-        st.error("Não foi possível carregar os dados. Verifique as configurações da API ou tente novamente.")
+        st.error("Não foi possível carregar os dados. Verifique as configurações da API, a existência de dados na tabela PCPEDC, ou tente novamente.")
         return
 
     col1, col2 = st.columns(2)
@@ -379,11 +371,11 @@ def main():
     st.subheader("Comparação de Vendas por Mês e Ano")
 
     # Seletores de data
-    col_data1, col_data2 = st.columns(2)
+    col_data1, col2 = st.columns(2)
     with col_data1:
         default_inicial = data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else pd.to_datetime('2024-01-01')
         data_inicial = st.date_input("Data Inicial", value=default_inicial, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.empty else None)
-    with col_data2:
+    with col2:
         data_final = st.date_input("Data Final", value=hoje, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.empty else None)
 
     if data_inicial > data_final:
@@ -399,7 +391,7 @@ def main():
         return
 
     # Adicionar colunas de ano e mês
-    df_periodo['Ano'] = df_periodo['DATA_PEDIDO'].dt.year.astype(str)  # Converter para string para evitar problemas no Plotly
+    df_periodo['Ano'] = df_periodo['DATA_PEDIDO'].dt.year.astype(str)
     df_periodo['Mês'] = df_periodo['DATA_PEDIDO'].dt.month
 
     # Agrupar por ano e mês
