@@ -66,14 +66,17 @@ def main():
     st.subheader("Filtro de Período (Fornecedores)")
     today = datetime.today()
     col1, col2 = st.columns(2)
+    data_inicial = datetime(today.year, today.month, 1)
+    data_final = datetime(today.year, today.month, today.day)
+
+    col1, col2 = st.columns(2)
     with col1:
-        data_inicial = st.date_input("Data Inicial", value=datetime(today.year - 1, 1, 1), key="data_inicial")
+        data_inicial = st.date_input("Data Inicial", value=data_inicial, key="data_inicial")
     with col2:
-        data_final = st.date_input("Data Final", value=today, key="data_final")
+        data_final = st.date_input("Data Final", value=data_final, key="data_final")
 
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
     data_final = datetime.combine(data_final, datetime.max.time())
-
     if data_inicial > data_final:
         st.error("A data inicial não pode ser maior que a data final.")
         return
