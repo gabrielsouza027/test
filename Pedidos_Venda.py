@@ -194,6 +194,9 @@ def main():
     if df_pedidos.empty:
         st.warning("Nenhum pedido encontrado ou erro ao carregar os dados.")
         return
+        
+    df_pedidos['valor_item'] = df_pedidos['QT'] * df_pedidos['PVENDA']
+
 
     # Processar dados (agrupar por NUMPED)
     df_grouped = df_pedidos.groupby('NUMPED').agg({
@@ -203,7 +206,7 @@ def main():
         'MUNICIPIO': 'first', 'QT': 'sum', 'PVENDA': 'mean'
     }).reset_index()
 
-    df_grouped['valor_total'] = df_grouped['QT'] * df_grouped['PVENDA']
+    df_grouped = df_grouped.rename(columns={'valor_item': 'valor_total'})
     pedidos_dict = df_grouped.to_dict('records')
     pedidos_list_full = pedidos_dict
     filiais_unicas = sorted(set(df_grouped['CODFILIAL'].dropna().astype(str)))
