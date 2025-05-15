@@ -156,10 +156,13 @@ def exibir_grafico_top_produtos(df, periodo_inicial, periodo_final):
     top_produtos['Total_Vendido'] = top_produtos['Total_Vendido'].apply(formatar_quantidade)
 
     fig = px.bar(top_produtos, x='DESCRICAO_1', y='Valor_Total_Vendido',
-                 title='Top 20 Produtos Mais Vendidos',
-                 labels={'DESCRICAO_1': 'Produto', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)'},
-                 color='Valor_Total_Vendido', color_continuous_scale='RdYlGn',
-                 hover_data={'DESCRICAO_1': False, 'Valor_Total_Vendido_Formatado': True, 'Total_Vendido': True})
+             title='Top 20 Produtos Mais Vendidos',
+             labels={'DESCRICAO_1': 'Produto', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)'},
+             color='Valor_Total_Vendido', color_continuous_scale='RdYlGn',
+             hover_data={'DESCRICAO_1': False, 'Valor_Total_Vendido_Formatado': True, 'Total_Vendido': True})
+
+    fig.update_traces(texttemplate="%{customdata[0]}", textposition="outside", textfont_size=12,
+                  customdata=top_produtos[['Valor_Total_Vendido_Formatado']])
 
     fig.update_traces(texttemplate="%{customdata}", textposition="outside", textfont_size=12,
                       customdata=top_produtos['Valor_Total_Vendido_Formatado'])
@@ -230,12 +233,13 @@ def main():
     st.markdown("""
     <style>
         .stTextInput>div>div>input {
-            border: 2px solid #4CAF50;
-            border-radius: 10px;
-            padding: 10px;
-            font-size: 16px;
-            background-color: #f9f9f9;
-        }
+        border: 2px solid #4CAF50;
+        border-radius: 10px;
+        padding: 10px;
+        font-size: 16px;
+        background-color: #000000; /* Fundo preto */
+        color: #ffffff; /* Texto branco para contraste */
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -297,7 +301,6 @@ def main():
             st.error("A data inicial não pode ser maior que a data final.")
             return
         
-        exibir_grafico_vendas_por_tempo(df, periodo_inicio_tempo, periodo_fim_tempo)
 
 if __name__ == "__main__":
     main()
