@@ -427,9 +427,9 @@ def main():
     detailed_placeholder = st.empty()
     year_month_placeholder = st.empty()
 
-    # Intervalo de datas padrão (hoje: 13/05/2025)
-    default_start_date = date(2025, 5, 13)
-    default_end_date = date(2025, 5, 13)
+    # Intervalo de datas padrão (hoje: 14/05/2025)
+    default_start_date = date(2025, 5, 14)
+    default_end_date = date(2025, 5, 14)
 
     # Inicializar estado da sessão para relatórios
     if 'summary_reports' not in st.session_state:
@@ -485,17 +485,17 @@ def main():
                 gb = GridOptionsBuilder.from_dataframe(result_df)
                 gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
                 gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=120, filter="agDateColumnFilter")
-                gb.configure_column("CODUSUR", header_name="Código Usuário", width=120)
-                gb.configure_column("VENDEDOR", header_name="Vendedor", width=150)
-                gb.configure_column("PEDIDOS_DENTRO_ROTA", header_name="Pedidos Dentro Rota", width=150)
-                gb.configure_column("PEDIDOS_FORA_ROTA", header_name="Pedidos Fora Rota", width=150)
-                gb.configure_column("TOTAL", header_name="Total Pedidos", width=120)
-                gb.configure_column("PEDIDOS_COM_BONIFICACAO", header_name="Pedidos com Bonificação", width=150)
-                gb.configure_column("TOTAL_VENDIDO", header_name="Total Vendido (R$)", width=150)
-                gb.configure_column("MARKUP_TOTAL", header_name="Markup Total (%)", width=120)
-                gb.configure_column("MARGEM_TOTAL", header_name="Margem Total (%)", width=120)
+                gb.configure_column("CODUSUR", header_name="Código Usuário", width=140)
+                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200)
+                gb.configure_column("PEDIDOS_DENTRO_ROTA", header_name="Pedidos Dentro Rota", width=160)
+                gb.configure_column("PEDIDOS_FORA_ROTA", header_name="Pedidos Fora Rota", width=160)
+                gb.configure_column("TOTAL", header_name="Total Pedidos", width=130)
+                gb.configure_column("PEDIDOS_COM_BONIFICACAO", header_name="Pedidos com Bonificação", width=180)
+                gb.configure_column("TOTAL_VENDIDO", header_name="Total Vendido (R$)", width=160)
+                gb.configure_column("MARKUP_TOTAL", header_name="Markup Total (%)", width=140)
+                gb.configure_column("MARGEM_TOTAL", header_name="Margem Total (%)", width=140)
                 for supplier in ordered_suppliers:
-                    gb.configure_column(supplier, header_name=supplier, width=100)
+                    gb.configure_column(supplier, header_name=supplier, width=90)
                 
                 grid_options = gb.build()
                 
@@ -560,23 +560,24 @@ def main():
                 
                 gb = GridOptionsBuilder.from_dataframe(detailed_df)
                 gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-                gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=300, filter="agDateColumnFilter")
-                gb.configure_column("VENDEDOR", header_name="Vendedor", width=300)
-                gb.configure_column("CODCLI", header_name="Cód. Cliente", width=300)
-                gb.configure_column("PEDIDO", header_name="Pedido", width=300)
-                gb.configure_column("BONIFICACAO", header_name="Bonificação", width=300)
-                gb.configure_column("QUANTIDADE", header_name="Quantidade", width=300)
-                gb.configure_column("PREÇO", header_name="Preço (R$)", width=300)
-                gb.configure_column("CUSTO", header_name="Custo (R$)", width=300)
-                gb.configure_column("VENDA_TOTAL", header_name="Venda Total (R$)", width=300)
-                gb.configure_column("CUSTO_TOTAL", header_name="Custo Total (R$)", width=300)
-                gb.configure_column("MARGEM", header_name="Margem (%)", width=300)
-                gb.configure_column("MARKUP", header_name="Markup (%)", width=300)
-                gb.configure_column("CODPRODUTO", header_name="Cód. Produto", width=300)
-                gb.configure_column("PRODUTO", header_name="Produto", width=300)
-                gb.configure_column("FORNECEDOR", header_name="Fornecedor", width=300)
+                gb.configure_column("DATAPEDIDO", header_name="Data Pedido", width=120, filter="agDateColumnFilter")
+                gb.configure_column("CODUSUR", header_name="Código Usuário", width=140)
+                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200)
+                gb.configure_column("CODCLI", header_name="Cód. Cliente", width=120)
+                gb.configure_column("PEDIDO", header_name="Pedido", width=120)
+                gb.configure_column("BONIFICACAO", header_name="Bonificação", width=120)
+                gb.configure_column("QUANTIDADE", header_name="Quantidade", width=120)
+                gb.configure_column("PREÇO", header_name="Preço (R$)", width=140)
+                gb.configure_column("CUSTO", header_name="Custo (R$)", width=140)
+                gb.configure_column("VENDA_TOTAL", header_name="Venda Total (R$)", width=160)
+                gb.configure_column("CUSTO_TOTAL", header_name="Custo Total (R$)", width=160)
+                gb.configure_column("MARGEM", header_name="Margem (%)", width=120)
+                gb.configure_column("MARKUP", header_name="Markup (%)", width=120)
+                gb.configure_column("CODPRODUTO", header_name="Cód. Produto", width=120)
+                gb.configure_column("PRODUTO", header_name="Produto", width=200)
+                gb.configure_column("FORNECEDOR", header_name="Fornecedor", width=150)
                 for supplier in ordered_suppliers:
-                    gb.configure_column(supplier, header_name=supplier, width=300)
+                    gb.configure_column(supplier, header_name=supplier, width=80)
                 
                 grid_options = gb.build()
                 
@@ -607,7 +608,7 @@ def main():
         
         # Intervalo de datas configurável (de 2024 até hoje)
         year_month_start = date(2024, 1, 1)
-        year_month_end = date(2025, 5, 13)
+        year_month_end = date(2025, 5, 14)
         
         with st.spinner("Carregando dados para resumo por ano/mês..."):
             df = get_data(year_month_start, year_month_end)
@@ -669,12 +670,12 @@ def main():
                 
                 gb = GridOptionsBuilder.from_dataframe(year_month_summary)
                 gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
+                gb.configure_column("CODUSUR", header_name="Código RCA", width=140)
+                gb.configure_column("VENDEDOR", header_name="Vendedor", width=200)
                 gb.configure_column("CODCLIENTE", header_name="Cód. Cliente", width=120)
-                gb.configure_column("CODUSUR", header_name="Código RCA", width=150)
-                gb.configure_column("VENDEDOR", header_name="Vendedor", width=150)
-                gb.configure_column("FATURAMENTO_CLIENTE", header_name="Faturamento Cliente (R$)", width=150)
-                gb.configure_column("CUSTO_MERCADORIA", header_name="Custo Mercadoria Vendida (R$)", width=150)
-                gb.configure_column("CONT_MARG", header_name="Contribuição Margem (R$)", width=150)
+                gb.configure_column("FATURAMENTO_CLIENTE", header_name="Faturamento Cliente (R$)", width=180)
+                gb.configure_column("CUSTO_MERCADORIA", header_name="Custo Mercadoria Vendida (R$)", width=200)
+                gb.configure_column("CONT_MARG", header_name="Contribuição Margem (R$)", width=180)
                 gb.configure_column("MARGEM", header_name="Margem (%)", width=120)
                 
                 grid_options = gb.build()
