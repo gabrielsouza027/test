@@ -10,14 +10,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Injetar CSS para estilização
-st.markdown("""
-    <style>
-    .stApp {
-        max-width: 100% !important;
-    }
-    </style>
-""", unsafe_allow_html=True)
 
 # Configuração do cliente Supabase usando secrets do Streamlit Cloud
 try:
@@ -328,8 +320,7 @@ def main():
 
         if st.session_state.display_limit < len(st.session_state.pedidos_list):
             st.button("Carregar Mais", key="load_more", on_click=lambda: st.session_state.update(display_limit=st.session_state.display_limit + 50))
-    else:
-        st.info("Nenhum pedido disponível para exibição. Aplique os filtros para carregar os dados.")
+
 
 if __name__ == "__main__":
     main()
