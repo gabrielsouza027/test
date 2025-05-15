@@ -121,7 +121,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             f"&{date_column}.lte.{data_final.strftime('%Y-%m-%d')}"
         )
         logger.info(f"Fetching data with date filter: {date_filter}")
-        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=1000, filter_query=date_filter))
+        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=date_filter))
 
         if all_data:
             df = pl.DataFrame(all_data)
@@ -134,6 +134,23 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 _cache[key] = pl.DataFrame()
                 return pl.DataFrame()
 
+            # Validar formato de DATA antes de parsing
+            df = df.with_columns(
+                pl.col('DATA').cast(pl.Utf8).alias('DATA')  # Garantir que DATA é string
+            )
+            invalid_data = df.filter(
+                ~pl.col('DATA').str.contains(r'^\d{4}-\d{2}-\d{2}$') |
+                pl.col('DATA').is_null()
+            )
+            if not invalid_data.is_empty():
+                logger.warning(f"Valores inválidos na coluna DATA: {invalid_data['DATA'].head(5).to_list()}")
+                st.warning(f"Detectados valores inválidos na coluna DATA do Supabase. Verifique a tabela {table}.")
+
+            # Filtrar apenas DATA com formato válido
+            df = df.filter(
+                pl.col('DATA').str.contains(r'^\d{4}-\d{2}-\d{2}$')
+            )
+
             # Garantir tipos de dados
             df = df.with_columns([
                 pl.col('DATA').str.to_date(format="%Y-%m-%d", strict=False).alias('DATA'),
@@ -145,7 +162,7 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             df = df.filter(pl.col('DATA').is_not_null())
 
             # Log exemplos de DATA para depuração
-            logger.info(f"Amostra de valores de DATA: {df['DATA'].head(5).to_list()}")
+            logger.info(f"Amostra de valores de DATA após parsing: {df['DATA'].head(5).to_list()}")
 
             # Calcular valor total e extrair mês/ano
             df = df.with_columns([
@@ -155,25 +172,24 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             ])
 
             # Validar ANO e MES
-            df = df.filter(
-                pl.col('ANO').is_not_null() &
-                pl.col('MES').is_not_null() &
-                pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) &
-                pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)  # Ajuste o intervalo de anos conforme necessário
-            )
-
-            # Log valores inválidos de DATA, ANO e MES
-            invalid_data = df.filter(
-                pl.col('DATA').is_null() |
+            invalid_ano_mes = df.filter(
+                pl.col('ANO').is_null() |
                 pl.col('MES').is_null() |
                 ~pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) |
                 ~pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)
             )
-            if not invalid_data.is_empty():
-                logger.warning(f"Linhas com DATA, ANO ou MES inválidos: {invalid_data.select(['DATA', 'ANO', 'MES']).to_dicts()[:5]}")
+            if not invalid_ano_mes.is_empty():
+                logger.warning(f"Linhas com ANO ou MES inválidos: {invalid_ano_mes.select(['DATA', 'ANO', 'MES']).head(5).to_dicts()}")
+
+            df = df.filter(
+                pl.col('ANO').is_not_null() &
+                pl.col('MES').is_not_null() &
+                pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) &
+                pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)
+            )
 
             # Validar dados
-            if	df['QT'].lt(0).any():
+            if df['QT'].lt(0).any():
                 logger.warning("Quantidades negativas encontradas em 'QT'. Substituindo por 0.")
                 df = df.with_columns(pl.col('QT').clip(min=0))
             if df['PVENDA'].lt(0).any():
