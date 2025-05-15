@@ -18,7 +18,7 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-# Substitua a função get_data_from_supabase por esta versão
+# Função para buscar todos os dados
 def get_all_data_from_supabase():
     if "all_data" not in cache:
         try:
@@ -63,11 +63,12 @@ def get_all_data_from_supabase():
 def main():
     st.title("📊 Dashboard de Vendas (Supabase + Streamlit Cloud)")
 
-    st.subheader("Filtro de Período (Fornecedores)")
-    col1, col2 = st.columns(2)
+    # Definição do mês atual como padrão
+    today = datetime.today()
     data_inicial = datetime(today.year, today.month, 1)
     data_final = datetime(today.year, today.month, today.day)
 
+    st.subheader("Filtro de Período (Fornecedores)")
     col1, col2 = st.columns(2)
     with col1:
         data_inicial = st.date_input("Data Inicial", value=data_inicial, key="data_inicial")
@@ -76,13 +77,12 @@ def main():
 
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
     data_final = datetime.combine(data_final, datetime.max.time())
+
     if data_inicial > data_final:
         st.error("A data inicial não pode ser maior que a data final.")
         return
 
     df = get_all_data_from_supabase()
-
-
     if df.empty:
         st.warning("Nenhum dado encontrado para o período selecionado.")
         return
@@ -140,7 +140,7 @@ def main():
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            height=300
+            height=400
         )
 
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
@@ -161,9 +161,9 @@ def main():
 
     col1, col2 = st.columns(2)
     with col1:
-        selected_ano = st.selectbox("Selecione o Ano", anos, index=anos.index(current_year) if current_year in anos else 0, key="ano_produto")
+        selected_ano = st.selectbox("Selecione o Ano", anos, index=anos.index(current_year), key="ano_produto")
     with col2:
-        selected_mes = st.selectbox("Selecione o Mês", meses_nomes, index=meses_nomes.index(current_month_name) if current_month_name in meses_nomes else 0, key="mes_produto")
+        selected_mes = st.selectbox("Selecione o Mês", meses_nomes, index=meses_nomes.index(current_month_name), key="mes_produto")
 
     selected_mes_num = list(month_names.keys())[list(month_names.values()).index(selected_mes)]
     df_filtered = df_filtered_range[(df_filtered_range['MES'] == selected_mes_num) & (df_filtered_range['ANO'] == selected_ano)]
@@ -193,7 +193,7 @@ def main():
             pivot_produtos,
             gridOptions=gb_produtos.build(),
             update_mode=GridUpdateMode.SELECTION_CHANGED,
-            height=400,
+            height=500,
             allow_unsafe_jscode=True,
             theme="streamlit"
         )
