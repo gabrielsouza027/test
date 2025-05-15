@@ -31,7 +31,6 @@ def get_all_data_from_supabase():
             page_size = 1000
             offset = 0
 
-            st.info("Buscando dados do Supabase...")
             while True:
                 response = (
                     supabase.table("PCVENDEDOR2")
