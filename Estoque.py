@@ -1,5 +1,6 @@
 import streamlit as st
 import polars as pl
+import pandas as pd
 from supabase import create_client, Client
 import datetime
 from cachetools import TTLCache
@@ -69,6 +70,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
         if filter_query:
             url += f"&{filter_query}"
+        logger.info(f"Executando query para {table}: {url}")
         
         async with session.get(url, headers=headers, timeout=30) as response:
             if response.status != 200:
@@ -83,7 +85,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         raise
 
 # Função para buscar todas as páginas de uma tabela assincronamente
-async def fetch_all_pages(table, limit=10000, max_pages=500, filter_query=None):
+async def fetch_all_pages(table, limit=10000, max_pages=100, filter_query=None):
     all_data = []
     async with aiohttp.ClientSession() as session:
         tasks = []
@@ -105,8 +107,8 @@ async def fetch_all_pages(table, limit=10000, max_pages=500, filter_query=None):
 
 # Função para buscar dados do Supabase com cache e Polars
 @st.cache_data(show_spinner=False, ttl=180)
-def fetch_supabase_data(_cache, table, columns_expected, date_column=None, data_inicial=None, data_final=None):
-    key = f"{table}_{data_inicial}_{data_final}"
+def fetch_supabase_data(_cache, table, columns_expected, date_column=None, data_inicial=None, data_final=None, cache_version="v2"):
+    key = f"{table}_{data_inicial}_{data_final}_{cache_version}"  # Adiciona versão para invalidar cache antigo
     if key in _cache:
         logger.info(f"Dados da tabela {table} recuperados do cache")
         return _cache[key]
@@ -120,7 +122,7 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, data_
             filter_query = f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
 
         # Executar busca assíncrona
-        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=500, filter_query=filter_query))
+        all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=100, filter_query=filter_query))
 
         if all_data:
             # Converter para Polars DataFrame
