@@ -185,7 +185,7 @@ def auto_reload():
         st.session_state.last_reload = time.time()
     
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 30:  # 30 segundos
+    if current_time - st.session_state.last_reload >= 120:  # 30 segundos
         st.session_state.last_reload = current_time
         st.cache_data.clear()  # Limpar o cache para forçar nova busca
         st.rerun()  # Forçar reload da página
