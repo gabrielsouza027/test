@@ -47,7 +47,7 @@ SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO_PRODUTO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
@@ -304,7 +304,7 @@ def main():
                         **Valor Total:** R$ {pedido.get('valor_total', 0):,.2f}
                     """, unsafe_allow_html=True)
                 st.subheader("Produtos")
-                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO', 'QT', 'PVENDA', 'POSICAO']]
+                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO_PRODUTO', 'QT', 'PVENDA', 'POSICAO']]
                 produtos_df["VALOR_TOTAL_ITEM"] = produtos_df["QT"] * produtos_df["PVENDA"]
                 produtos_df = produtos_df.rename(columns={
                     "CODPROD": "Código Produto", "DESCRICAO": "Descrição", "QT": "Quantidade",
