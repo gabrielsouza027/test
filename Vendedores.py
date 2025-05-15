@@ -61,7 +61,7 @@ def auto_reload():
         st.cache_data.clear()  # Limpar o cache para forçar nova busca
         st.rerun()  # Forçar reload da página
 
-# Função para obter dados do Supabase com paginação e retry
+# Função para obter dados do Supabase sem paginação
 @st.cache_data(show_spinner=False, ttl=60)
 def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
@@ -90,8 +90,6 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
 
         df = pd.DataFrame(response_data)
         df.columns = df.columns.str.strip()
-
-        logger.info kendisi
 
         logger.info(f"Total de registros recuperados da tabela {tabela}: {len(df)}")
         return df
@@ -461,7 +459,7 @@ def main():
 
     tipo_filtro = st.radio(
         "Filtrar por:", 
-        opcoes_filtro, 
+        opcoes_f rato, 
         horizontal=True,
         key="filtro_principal_radio"
     )
