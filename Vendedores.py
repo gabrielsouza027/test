@@ -37,6 +37,9 @@ def init_supabase():
         supabase_client = create_client(SUPABASE_URL.strip(), SUPABASE_KEY.strip())
         # Testar conexão com uma query simples
         response = supabase_client.table('VWSOMELIER').select('CODPROD').limit(1).execute()
+        if not response.data:
+            logger.error("Nenhum dado retornado na query de teste para VWSOMELIER.")
+            return None
         return supabase_client
     except Exception as e:
         logger.error(f"Erro ao conectar ao Supabase: {e}")
@@ -64,10 +67,10 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
         all_data = []
         offset = 0
-        limit = 1000  # Reduzido para evitar sobrecarga
+        limit = 1000  # Batch size reduzido para estabilidade
         max_retries = 3
 
-        # Obter o total de registros esperados para validação
+        # Obter o total de registros esperados
         @backoff.on_exception(backoff.expo, Exception, max_tries=max_retries)
         def get_count():
             count_query = supabase.table(tabela).select("*", count="exact", head=True)
@@ -76,7 +79,9 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
                     count_query = count_query.gte('DATA', data_inicial.isoformat()).lte('DATA', data_final.isoformat())
                 elif tabela == 'PCVENDEDOR':
                     count_query = count_query.gte('DATAPEDIDO', data_inicial.isoformat()).lte('DATAPEDIDO', data_final.isoformat())
-            return count_query.execute().count
+                else:
+                    logger.warning(f"Tabela {tabela} não reconhecida para filtro de data.")
+            return count_query.execute().count or 0
 
         total_records = get_count()
         logger.info(f"Total de registros esperados na tabela {tabela}: {total_records}")
@@ -97,7 +102,7 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
                 response = fetch_batch(offset, limit)
                 response_data = response.data
                 if not response_data:
-                    logger.info(f"Finalizada a recuperação de dados da tabela {tabela}")
+                    logger.info(f"Nenhum dado retornado para lote {offset}-{offset+limit-1} na tabela {tabela}.")
                     break
                 all_data.extend(response_data)
                 offset += limit
@@ -105,46 +110,48 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
             except Exception as e:
                 logger.error(f"Erro ao buscar lote {offset}-{offset+limit-1}: {e}")
                 if offset + limit >= total_records:
-                    break  # Evita loop infinito se o último lote falhar
+                    break
                 continue
 
         if not all_data:
-            logger.warning(f"Nenhum dado encontrado na tabela {tabela} para o período {data_inicial} a {data_final}")
+            logger.warning(f"Nenhum dado encontrado na tabela {tabela} para o período {data_inicial} a {data_final}.")
             return pd.DataFrame()
 
         df = pd.DataFrame(all_data)
-        df.columns = df.columns.str.strip()  # Remover espaços em branco dos nomes das colunas
+        df.columns = df.columns.str.strip()
         
-        # Validar se todos os registros foram fetched
         if total_records and len(df) < total_records:
             logger.warning(f"Fetched {len(df)} registros, mas esperados {total_records}. Continuando com dados parciais.")
         
         return df
     except Exception as e:
-        logger.error(f"Erro geral ao buscar dados do Supabase: {e}")
+        logger.error(f"Erro geral ao buscar dados do Supabase para tabela {tabela}: {e}")
         return pd.DataFrame()
 
-# Restante do código (inalterado)
 def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, data_final):
     required_columns_vwsomelier = ['DATA', 'PVENDA', 'QT', 'NUMPED', 'CODPROD']
-    missing_columns_vwsomelier = [col for col in required_columns_vwsomelier if col not in data_vwsomelier.columns]
-    if missing_columns_vwsomelier:
-        logger.error(f"Colunas faltando em VWSOMELIER: {', '.join(missing_columns_vwsomelier)}")
-        return pd.DataFrame(), pd.DataFrame()
-
     required_columns_pcpedc = ['CODUSUR', 'VENDEDOR', 'CODCLIENTE', 'PEDIDO']
+    
+    # Verificar colunas necessárias
+    missing_columns_vwsomelier = [col for col in required_columns_vwsomelier if col not in data_vwsomelier.columns]
     missing_columns_pcpedc = [col for col in required_columns_pcpedc if col not in data_pcpedc.columns]
-    if missing_columns_pcpedc:
-        logger.error(f"Colunas faltando em PCVENDEDOR: {', '.join(missing_columns_pcpedc)}")
+    
+    if missing_columns_vwsomelier or missing_columns_pcpedc or data_vwsomelier.empty or data_pcpedc.empty:
+        logger.error(f"Colunas faltando em VWSOMELIER: {missing_columns_vwsomelier}, PCVENDEDOR: {missing_columns_pcpedc}")
         return pd.DataFrame(), pd.DataFrame()
 
-    data_vwsomelier['DATA'] = pd.to_datetime(data_vwsomelier['DATA'], errors='coerce')
-    data_vwsomelier['PVENDA'] = pd.to_numeric(data_vwsomelier['PVENDA'], errors='coerce').fillna(0).astype('float32')
-    data_vwsomelier['QT'] = pd.to_numeric(data_vwsomelier['QT'], errors='coerce').fillna(0).astype('int32')
-    data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].astype(str).str.strip()
-    data_pcpedc['CODUSUR'] = data_pcpedc['CODUSUR'].astype(str).str.strip()
-    data_pcpedc['CODCLIENTE'] = data_pcpedc['CODCLIENTE'].astype(str).str.strip()
-    data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].astype(str).str.strip()
+    # Garantir tipos de dados
+    try:
+        data_vwsomelier['DATA'] = pd.to_datetime(data_vwsomelier['DATA'], errors='coerce')
+        data_vwsomelier['PVENDA'] = pd.to_numeric(data_vwsomelier['PVENDA'], errors='coerce').fillna(0).astype('float32')
+        data_vwsomelier['QT'] = pd.to_numeric(data_vwsomelier['QT'], errors='coerce').fillna(0).astype('int32')
+        data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].astype(str).str.strip()
+        data_pcpedc['CODUSUR'] = data_pcpedc['CODUSUR'].astype(str).str.strip()
+        data_pcpedc['CODCLIENTE'] = data_pcpedc['CODCLIENTE'].astype(str).str.strip()
+        data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].astype(str).str.strip()
+    except Exception as e:
+        logger.error(f"Erro ao converter tipos de dados: {e}")
+        return pd.DataFrame(), pd.DataFrame()
 
     data_vwsomelier['NUMPED'] = data_vwsomelier['NUMPED'].str.replace(r'\.0$', '', regex=True)
     data_pcpedc['PEDIDO'] = data_pcpedc['PEDIDO'].str.replace(r'\.0$', '', regex=True)
@@ -209,6 +216,10 @@ def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, dat
     return vendedores, data_filtrada
 
 def exibir_detalhes_vendedores(vendedores):
+    if vendedores.empty:
+        logger.warning("Nenhum dado de vendedores para exibir.")
+        return
+
     st.markdown(
         """
         <div style="display: flex; align-items: center;">
