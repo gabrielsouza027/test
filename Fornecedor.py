@@ -274,13 +274,7 @@ def main():
             VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
         ).sort(['FORNECEDOR', 'ANO', 'MES'])
         
-        # Pivot table
-        pivot_df = df_grouped.pivot(
-            values='VALOR_TOTAL_ITEM',
-            index='FORNECEDOR',
-            columns=['ANO', 'MES'],
-            aggregate_function='sum'
-        ).fill_null(0)
+
         
         # Log pivot columns for debugging
         logger.info(f"Pivot table columns: {pivot_df.columns}")
