@@ -47,7 +47,7 @@ SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VEI', 'NOME_VENI', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
@@ -294,8 +294,8 @@ def main():
                     """, unsafe_allow_html=True)
                 with col6:
                     st.markdown(f"""
-                        **Cód. Veículo:** {pedido.get('CODIGO_VEI', 'N/A')}  
-                        **Vendedor:** {pedido.get('NOME_VENI', 'N/A')}  
+                        **Cód. Vendedor:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
+                        **Vendedor:** {pedido.get('NOME_VENDEDOR', 'N/A')}  
                         **Nº Nota:** {pedido.get('NUMNOTA', 'N/A')}  
                         **Cód. Filial:** {pedido.get('CODFILIAL', 'N/A')}  
                         **Observação:** {pedido.get('OBS', 'N/A')}  
