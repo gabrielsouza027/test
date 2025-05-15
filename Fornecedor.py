@@ -110,14 +110,13 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
     table = config["table"]
     columns_expected = config["columns"]
     date_column = config["date_column"]
-    filial_filter = config["filial_filter"]
 
     try:
-        # Construir filtro de data e filial
+        # Construir filtro de data
         data_inicial_str = data_inicial.strftime('%Y-%m-%d')
         data_final_str = data_final.strftime('%Y-%m-%d')
         filter_query = (
-            f"{filial_filter}&{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
+            f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
         )
 
         # Executar busca assíncrona
