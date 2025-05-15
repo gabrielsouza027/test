@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from supabase import create_client, Client
 from cachetools import TTLCache
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
@@ -29,7 +29,7 @@ def get_all_data_from_supabase():
         try:
             all_data = []
             page_size = 1000
-            offset = 0  # Ajustado para começar do 0
+            offset = 0
 
             st.info("Buscando dados do Supabase...")
             while True:
@@ -58,7 +58,6 @@ def get_all_data_from_supabase():
                 st.error(f"Colunas ausentes no conjunto de dados: {missing_columns}")
                 return pd.DataFrame()
 
-            # Converter DATA para datetime
             df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
             if df['DATA'].isna().any():
                 st.warning("Algumas datas não puderam ser convertidas e serão ignoradas.")
@@ -79,12 +78,10 @@ def get_all_data_from_supabase():
 def main():
     st.title("📊 Dashboard de Vendas (Supabase + Streamlit Cloud)")
 
-    # Definição do mês atual como padrão
     today = datetime.today()
     data_inicial_default = datetime(today.year, today.month, 1)
     data_final_default = today
 
-    # Filtros de período
     st.subheader("Filtro de Período (Fornecedores)")
     col1, col2 = st.columns(2)
     with col1:
@@ -92,7 +89,6 @@ def main():
     with col2:
         data_final = st.date_input("Data Final", value=data_final_default, key="data_final")
 
-    # Converter para datetime
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
     data_final = datetime.combine(data_final, datetime.max.time())
 
@@ -100,13 +96,11 @@ def main():
         st.error("A data inicial não pode ser maior que a data final.")
         return
 
-    # Carregar dados
     df = get_all_data_from_supabase()
     if df.empty:
         st.warning("Nenhum dado disponível no Supabase. Verifique a conexão ou a tabela.")
         return
 
-    # Filtrar dados pelo período
     df_filtered = df[(df['DATA'] >= data_inicial) & (df['DATA'] <= data_final)]
     if df_filtered.empty:
         st.warning(f"Nenhum dado encontrado para o período de {data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}.")
@@ -115,7 +109,7 @@ def main():
         st.write(f"Data máxima: {df['DATA'].max().strftime('%d/%m/%Y')}")
         return
 
-    # -------------------- TABELA 1 --------------------
+    # TABELA 1
     st.subheader("Valor Total por Fornecedor por Mês")
     search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
 
@@ -174,13 +168,13 @@ def main():
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
         st.download_button("Download CSV - Fornecedores", data=csv, file_name="fornecedores.csv", mime="text/csv")
 
-    # -------------------- TABELA 2 --------------------
+    # TABELA 2
     st.markdown("---")
     st.subheader("Quantidade Vendida por Produto por Mês")
 
     df_filtered_range = df[df['ANO'] >= 2024]
     anos = sorted(df_filtered_range['ANO'].unique())
-    meses = sorted(df_filtered a'MES'].unique())
+    meses = sorted(df_filtered_range['MES'].unique())  # Fixed syntax error
     meses_nomes = [month_names[m] for m in meses]
 
     current_year = today.year
