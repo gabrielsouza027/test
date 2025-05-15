@@ -1,12 +1,13 @@
 import streamlit as st
-import pandas as pd
+import polars as pl
 from supabase import create_client, Client
 import datetime
 from cachetools import TTLCache
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import time
 import logging
-import concurrent.futures
+import asyncio
+import aiohttp
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configurar logging
@@ -54,22 +55,51 @@ SUPABASE_CONFIG = {
     }
 }
 
-# Função para buscar dados do Supabase com paginação e retry
+# Função para buscar dados do Supabase com paginação e retry (assíncrona)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def fetch_supabase_page(table, offset, limit, filter_query=None):
+async def fetch_supabase_page_async(session, table, offset, limit, filter_query=None):
     try:
-        query = supabase.table(table).select("*")
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Range": f"{offset}-{offset + limit - 1}"
+        }
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
         if filter_query:
-            query = query.filter(filter_query)
-        response = query.range(offset, offset + limit - 1).execute()
-        data = response.data
-        logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
-        return data
+            url += f"&{filter_query}"
+        
+        async with session.get(url, headers=headers, timeout=30) as response:
+            response.raise_for_status()
+            data = await response.json()
+            logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
+            return data
     except Exception as e:
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
         raise
 
-# Função para buscar dados do Supabase com cache, paginação e paralelismo
+# Função para buscar todas as páginas de uma tabela assincronamente
+async def fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=None):
+    all_data = []
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for offset in range(0, limit * max_pages, limit):
+            tasks.append(fetch_supabase_page_async(session, table, offset, limit, filter_query))
+        
+        for future in asyncio.as_completed(tasks):
+            try:
+                data = await future
+                if data:
+                    all_data.extend(data)
+                else:
+                    break
+            except Exception as e:
+                logger.error(f"Erro em uma requisição: {e}")
+                continue
+    
+    return all_data
+
+# Função para buscar dados do Supabase com cache e Polars
 @st.cache_data(show_spinner=False, ttl=300)
 def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filial_filter=None, last_update=None):
     key = f"{table}_{last_update or 'full'}"
@@ -78,68 +108,54 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
         return _cache[key]
 
     try:
-        all_data = []
-        limit = 10000  # Aumentado para 50.000 por página
-        max_pages = 5000 # Limite ajustável para evitar sobrecarga
-
         # Construir filtro de data incremental, se aplicável
         filter_query = filial_filter
         if last_update and date_column:
             last_update_str = last_update.strftime('%Y-%m-%d')
             filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
 
-        # Usar ThreadPoolExecutor para paralelismo
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            offset = 0
-            for _ in range(max_pages):
-                futures.append(executor.submit(fetch_supabase_page, table, offset, limit, filter_query))
-                offset += limit
-                if offset >= limit * max_pages:
-                    break
-
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    data = future.result()
-                    if data:
-                        all_data.extend(data)
-                    else:
-                        break
-                except Exception as e:
-                    logger.error(f"Erro em uma requisição: {e}")
-                    continue
+        # Executar busca assíncrona
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        all_data = loop.run_until_complete(fetch_all_pages(table, limit=10000, max_pages=5000, filter_query=filter_query))
+        loop.close()
 
         if all_data:
-            df = pd.DataFrame(all_data)
+            # Converter para Polars DataFrame
+            df = pl.DataFrame(all_data)
+            
+            # Verificar colunas esperadas
             missing_columns = [col for col in columns_expected if col not in df.columns]
             if missing_columns:
                 logger.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
                 st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
-                _cache[key] = pd.DataFrame()
-                return pd.DataFrame()
+                _cache[key] = pl.DataFrame()
+                return pl.DataFrame()
+
+            # Garantir tipos de dados
             if date_column and date_column in df.columns:
-                df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-                df = df.dropna(subset=[date_column])
+                df = df.with_columns(pl.col(date_column).str.to_datetime(format="%Y-%m-%d", strict=False))
+                df = df.filter(pl.col(date_column).is_not_null())
+
             _cache[key] = df
             logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
         else:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
             st.warning(f"Nenhum dado retornado da tabela {table}.")
-            _cache[key] = pd.DataFrame()
-            df = pd.DataFrame()
+            _cache[key] = pl.DataFrame()
+            df = pl.DataFrame()
 
     except Exception as e:
         logger.error(f"Erro ao buscar dados da tabela {table}: {e}")
         st.error(f"Erro ao buscar dados da tabela {table}: {e}")
-        _cache[key] = pd.DataFrame()
-        df = pd.DataFrame()
+        _cache[key] = pl.DataFrame()
+        df = pl.DataFrame()
 
     return _cache[key]
 
 # Função para buscar dados de vendas (VWSOMELIER)
 def fetch_vendas_data():
     config = SUPABASE_CONFIG["vendas"]
-    # Buscar dados novos desde a última atualização
     last_update = st.session_state.get('last_vendas_update', None)
     df = fetch_supabase_data(
         cache_vendas, 
@@ -149,11 +165,12 @@ def fetch_vendas_data():
         filial_filter=config["filial_filter"], 
         last_update=last_update
     )
-    if not df.empty:
-        df['QT'] = pd.to_numeric(df['QT'], errors='coerce').fillna(0)
-        # Atualizar última data de atualização
+    if not df.is_empty():
+        df = df.with_columns(pl.col('QT').cast(pl.Float64, strict=False).fill_null(0))
         if config["date_column"] in df.columns:
-            st.session_state['last_vendas_update'] = df[config["date_column"]].max()
+            max_date = df[config["date_column"]].max()
+            if max_date is not None:
+                st.session_state['last_vendas_update'] = max_date
     return df
 
 # Função para buscar dados de estoque (ESTOQUE)
@@ -168,27 +185,32 @@ def fetch_estoque_data():
         filial_filter=config["filial_filter"], 
         last_update=last_update
     )
-    if not df.empty:
-        for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCOMPRA']:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
+    if not df.is_empty():
+        df = df.with_columns([
+            pl.col(col).cast(pl.Float64, strict=False).fill_null(0)
+            for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']
+            if col in df.columns
+        ]).with_columns([
+            pl.col(col).str.to_datetime(format="%Y-%m-%d", strict=False)
+            for col in ['DTULTENT', 'DTULTSAIDA', 'DTULTPEDCOMPRA']
+            if col in df.columns
+        ])
         if config["date_column"] in df.columns:
-            st.session_state['last_estoque_update'] = df[config["date_column"]].max()
+            max_date = df[config["date_column"]].max()
+            if max_date is not None:
+                st.session_state['last_estoque_update'] = max_date
     return df
 
-# Função para realizar o reload automático a cada 30 segundos
+# Função para realizar o reload automático a cada 120 segundos
 def auto_reload():
     if 'last_reload' not in st.session_state:
         st.session_state.last_reload = time.time()
     
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 120:  # 30 segundos
+    if current_time - st.session_state.last_reload >= 120:
         st.session_state.last_reload = current_time
-        st.cache_data.clear()  # Limpar o cache para forçar nova busca
-        st.rerun()  # Forçar reload da página
+        st.cache_data.clear()
+        st.rerun()
 
 # Função principal
 def main():
@@ -198,39 +220,46 @@ def main():
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
-    # Definir as datas de início e fim para os últimos 2 meses (usado para validação)
-    data_final = datetime.date.today()  # 14/05/2025
-    data_inicial = data_final - datetime.timedelta(days=60)  # 15/03/2025
+    # Definir as datas de início e fim para os últimos 2 meses
+    data_final = datetime.date.today()  # 15/05/2025
+    data_inicial = data_final - datetime.timedelta(days=60)  # 16/03/2025
 
     # Buscar dados de vendas (VWSOMELIER)
     with st.spinner("Carregando dados de vendas..."):
         vendas_df = fetch_vendas_data()
 
-    if vendas_df.empty:
+    if vendas_df.is_empty():
         st.warning("Não há vendas para o período selecionado.")
+        vendas_grouped = pl.DataFrame()
     else:
         # Agrupar as vendas por produto e somar as quantidades vendidas
-        vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
+        vendas_grouped = vendas_df.group_by('CODPROD').agg(QT=pl.col('QT').sum())
 
     # Buscar dados de estoque (ESTOQUE)
     with st.spinner("Carregando dados de estoque..."):
         estoque_df = fetch_estoque_data()
 
-    if estoque_df.empty:
+    if estoque_df.is_empty():
         st.warning("Não há dados de estoque para o período selecionado.")
+        merged_df = pl.DataFrame()
     else:
         # Verificar se os produtos com alta venda estão sem estoque
-        merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
+        merged_df = vendas_grouped.join(
+            estoque_df.select(['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']),
+            on='CODPROD',
+            how='left'
+        )
 
         # Filtrando os produtos que NÃO possuem estoque
-        sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
+        sem_estoque_df = merged_df.filter(
+            pl.col('QT_ESTOQUE').is_null() | (pl.col('QT_ESTOQUE') <= 0)
+        )
 
         # Barra de pesquisa para código do produto
         pesquisar = st.text_input("Pesquisar por Código do Produto ou Nome", "")
 
         # Renomear as colunas
-        df = estoque_df.copy()
-        df = df.rename(columns={
+        df = estoque_df.rename({
             'CODFILIAL': 'Código da Filial',
             'CODPROD': 'Código do Produto',
             'NOME_PRODUTO': 'Nome do Produto',
@@ -245,24 +274,31 @@ def main():
         })
 
         if pesquisar:
-            df = df[
-                (df['Código do Produto'].astype(str).str.contains(pesquisar, case=False, na=False)) |
-                (df['Nome do Produto'].str.contains(pesquisar, case=False, na=False))
-            ]
+            df = df.filter(
+                pl.col('Código do Produto').cast(pl.Utf8).str.contains(pesquisar, case=False) |
+                pl.col('Nome do Produto').str.contains(pesquisar, case=False)
+            )
 
-        df['Quantidade Total'] = df[['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada']].fillna(0).sum(axis=1)
+        df = df.with_columns(
+            (pl.col('Estoque Disponível').fill_null(0) + 
+             pl.col('Quantidade Reservada').fill_null(0) + 
+             pl.col('Quantidade Bloqueada').fill_null(0)).alias('Quantidade Total')
+        )
 
         # Reordenar as colunas
-        df = df.reindex(columns=[
+        df = df.select([
             'Código da Filial', 'Código do Produto', 'Nome do Produto', 'Estoque Disponível', 'Quantidade Reservada',
             'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada',
             'Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra'
         ])
 
+        # Converter para Pandas para AgGrid
+        df_pandas = df.to_pandas()
+
         # Configurar a tabela de estoque com AgGrid e larguras fixas
         st.subheader("✅ Estoque")
         st.markdown("Use a barra de rolagem para ver mais linhas.")
-        gb = GridOptionsBuilder.from_dataframe(df)
+        gb = GridOptionsBuilder.from_dataframe(df_pandas)
         gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=False)
         gb.configure_column("Código da Filial", width=100)
         gb.configure_column("Código do Produto", width=120)
@@ -281,7 +317,7 @@ def main():
         grid_options = gb.build()
 
         # Formatar números e datas para exibição
-        df_display = df.copy()
+        df_display = df_pandas.copy()
         for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
             df_display[col] = df_display[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
         for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']:
@@ -297,31 +333,31 @@ def main():
             fit_columns_on_grid_load=False
         )
 
-        if sem_estoque_df.empty:
+        if sem_estoque_df.is_empty():
             st.info("Não há produtos vendidos sem estoque.")
         else:
             # Exibir a tabela com os produtos sem estoque mas vendidos
             st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
 
-            sem_estoque_df_renomeado = sem_estoque_df[sem_estoque_df['QT_ESTOQUE'].isna() | (sem_estoque_df['QT_ESTOQUE'] <= 0)]
-
-            sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
+            sem_estoque_df = sem_estoque_df.rename({
                 'CODPROD': 'CÓDIGO PRODUTO',
                 'NOME_PRODUTO': 'NOME DO PRODUTO',
                 'QT': 'QUANTIDADE VENDIDA',
                 'QT_ESTOQUE': 'ESTOQUE TOTAL'
             })
 
-            sem_estoque_df_renomeado = sem_estoque_df_renomeado[
-                sem_estoque_df_renomeado['NOME DO PRODUTO'].notna() & 
-                (sem_estoque_df_renomeado['NOME DO PRODUTO'] != '')
-            ]
+            sem_estoque_df = sem_estoque_df.filter(
+                pl.col('NOME DO PRODUTO').is_not_null() & (pl.col('NOME DO PRODUTO') != '')
+            )
 
-            sem_estoque_df_renomeado = sem_estoque_df_renomeado[[
+            sem_estoque_df = sem_estoque_df.select([
                 'CÓDIGO PRODUTO', 'NOME DO PRODUTO', 'QUANTIDADE VENDIDA', 'ESTOQUE TOTAL'
-            ]]
+            ])
 
-            gb = GridOptionsBuilder.from_dataframe(sem_estoque_df_renomeado)
+            # Converter para Pandas para AgGrid
+            sem_estoque_df_pandas = sem_estoque_df.to_pandas()
+
+            gb = GridOptionsBuilder.from_dataframe(sem_estoque_df_pandas)
             gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=False)
             gb.configure_column("CÓDIGO PRODUTO", width=150)
             gb.configure_column("NOME DO PRODUTO", width=300)
@@ -331,7 +367,7 @@ def main():
             gb.configure_grid_options(domLayout='normal')
             grid_options = gb.build()
 
-            df_sem_estoque_display = sem_estoque_df_renomeado.copy()
+            df_sem_estoque_display = sem_estoque_df_pandas.copy()
             df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
             df_sem_estoque_display['ESTOQUE TOTAL'] = pd.to_numeric(df_sem_estoque_display['ESTOQUE TOTAL'], errors='coerce').fillna(0)
             df_sem_estoque_display['QUANTIDADE VENDIDA'] = df_sem_estoque_display['QUANTIDADE VENDIDA'].apply(lambda x: f"{x:,.0f}")
@@ -346,6 +382,8 @@ def main():
                 theme='streamlit',
                 fit_columns_on_grid_load=True
             )
+
+if [Ideal Response]
 
 if __name__ == "__main__":
     main()
