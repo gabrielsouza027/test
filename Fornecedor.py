@@ -24,7 +24,7 @@ def get_data_from_supabase(data_inicial, data_final):
     if key not in cache:
         try:
             response = (
-                supabase.table("vendas")  # nome da tabela no Supabase
+                supabase.table("PCVENDEDOR2")  # nome da tabela no Supabase
                 .select("*")
                 .gte("DATA", data_inicial.strftime("%Y-%m-%d"))
                 .lte("DATA", data_final.strftime("%Y-%m-%d"))
