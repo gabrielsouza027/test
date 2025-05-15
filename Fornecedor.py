@@ -26,8 +26,6 @@ def get_data_from_supabase(data_inicial, data_final):
             response = (
                 supabase.table("PCVENDEDOR2")
                 .select("*")
-                .gte("DATA", data_inicial.strftime("%Y-%m-%d"))
-                .lte("DATA", data_final.strftime("%Y-%m-%d"))
                 .limit(999999)
                 .execute()
             )
