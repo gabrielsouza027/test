@@ -25,7 +25,7 @@ def get_data_from_supabase():
             response = (
                 supabase.table("PCVENDEDOR2")
                 .select("*")
-                .limit(999999)  # garantir o máximo possível de linhas
+                .limit(2000)  # garantir o máximo possível de linhas
                 .execute()
             )
             data = response.data
