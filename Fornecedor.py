@@ -270,19 +270,30 @@ def main():
         # Barra de Pesquisa
         search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
         
-        # Agrupar por fornecedor, ano e mês
+                # Agrupar por fornecedor, ano e mês
         df_grouped = df.group_by(['FORNECEDOR', 'ANO', 'MES']).agg(
             VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
         ).sort(['FORNECEDOR', 'ANO', 'MES'])
         
+        # Verificar se df_grouped contém as colunas ANO e MES
+        if 'ANO' not in df_grouped.columns or 'MES' not in df_grouped.columns:
+            logger.error("Colunas ANO ou MES ausentes no DataFrame agrupado.")
+            st.error("Erro: Colunas ANO ou MES ausentes no DataFrame agrupado.")
+            return
+        
         # Criar pivot table (ano, mes) como colunas, fornecedor em index, valores soma VALOR_TOTAL_ITEM
-        pivot_df = df_grouped.pivot(
-            values='VALOR_TOTAL_ITEM',
-            index='FORNECEDOR',
-            columns=['ANO', 'MES'],
-            aggregate_function='sum',
-            sort_columns=True
-        )
+        try:
+            pivot_df = df_grouped.pivot(
+                values='VALOR_TOTAL_ITEM',
+                index='FORNECEDOR',
+                columns=['ANO', 'MES'],
+                aggregate_function='sum',
+                sort_columns=True
+            )
+        except Exception as e:
+            logger.error(f"Erro ao criar pivot table: {e}")
+            st.error(f"Erro ao criar pivot table: {e}")
+            return
         
         # Gerar novos nomes para as colunas de acordo com o mês-ano
         month_names = {
@@ -293,6 +304,8 @@ def main():
         
         new_columns = ['FORNECEDOR']
         seen_columns = set(new_columns)
+        
+        # Processar as colunas do pivot_df
         for col in pivot_df.columns[1:]:
             try:
                 # col é tupla (ANO, MES)
@@ -314,17 +327,20 @@ def main():
                 st.error(f"Erro ao processar colunas do pivot: {col}. Verifique os dados de ANO e MES.")
                 return
         
+        # Validar que não há duplicatas
         if len(new_columns) != len(set(new_columns)):
             logger.error(f"Colunas duplicadas detectadas: {new_columns}")
             st.error("Erro: Colunas duplicadas no pivot. Verifique os dados de ANO e MES.")
             return
         
+        # Atribuir novos nomes de colunas
         try:
             pivot_df.columns = new_columns
         except Exception as e:
             logger.error(f"Erro ao renomear colunas: {e}\n{traceback.format_exc()}")
             st.error(f"Erro ao renomear colunas: {e}")
             return
+
         
         # Adicionar coluna de Total
         pivot_df = pivot_df.with_columns(
