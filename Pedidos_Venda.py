@@ -292,7 +292,7 @@ def main():
                     """, unsafe_allow_html=True)
                 with col6:
                     st.markdown(f"""
-                        **Cód. Veículo:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
+                        **Cód. Vendedor:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
                         **Vendedor:** {pedido.get('NOME_VENDEDOR', 'N/A')}  
                         **Nº Nota:** {pedido.get('NUMNOTA', 'N/A')}  
                         **Cód. Filial:** {pedido.get('CODFILIAL', 'N/A')}  
