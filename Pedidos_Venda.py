@@ -40,14 +40,14 @@ except Exception as e:
     st.stop()
 
 # Configuração do cache (TTL de 60 segundos)
-cache = TTLCache(maxsize=10, ttl=300)
+cache = TTLCache(maxsize=10, ttl=60)
 
 # Configuração das tabelas e colunas esperadas
 SUPABASE_CONFIG = {
     "pedidos": {
         "table": "PCPEDI",
         "columns": ['created_at', 'NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'QT', 'CODPROD', 'PVENDA', 
-                   'POSICAO', 'CLIENTE', 'DESCRICAO_PRODUTO', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR', 'NUMNOTA', 
+                   'POSICAO', 'CLIENTE', 'DESCRICAO', 'CODIGO_VEI', 'NOME_VENI', 'NUMNOTA', 
                    'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO']
     }
     # Adicione mais tabelas aqui, se necessário
@@ -196,164 +196,55 @@ def main():
         return
 
     # Processar dados (agrupar por NUMPED)
-    # Agrupa os dados
-df_grouped = df_raw.groupby(['NUMPED', 'NUMCAR', 'DATA', 'CODCLI', 'CLIENTE', 'CODIGO_VENDEDOR', 'NOME_VENDEDOR',
-                             'POSICAO', 'NUMNOTA', 'OBS', 'OBS1', 'OBS2', 'CODFILIAL', 'MUNICIPIO', 'DESCRICAO_ROTA']).agg({
-    'QT': 'sum',
-    'PVENDA': 'sum',
-    'DESCRICAO_PRODUTO': lambda x: ', '.join(x.astype(str).unique())
-}).reset_index()
+    df_grouped = df_pedidos.groupby('NUMPED').agg({
+        'created_at': 'first', 'NUMCAR': 'first', 'DATA': 'first', 'CODCLI': 'first', 'CLIENTE': 'first',
+        'CODIGO_VEI': 'first', 'NOME_VENI': 'first', 'NUMNOTA': 'first', 'OBS': 'first',
+        'OBS1': 'first', 'OBS2': 'first', 'POSICAO': 'first', 'CODFILIAL': 'first',
+        'MUNICIPIO': 'first', 'QT': 'sum', 'PVENDA': 'mean'
+    }).reset_index()
 
-# Listas únicas
-clientes_unicos = sorted(set(df_grouped['CLIENTE'].dropna().astype(str)))
-vendedores_unicos = sorted(set(df_grouped['NOME_VENDEDOR'].dropna().astype(str)))
-filiais_unicas = sorted(set(df_grouped['CODFILIAL'].dropna().astype(str)))
-status_unicos = sorted(set(df_grouped['POSICAO'].dropna().astype(str)))
-regioes_unicas = sorted(set(df_grouped['DESCRICAO_ROTA'].dropna().astype(str)))
+    df_grouped['valor_total'] = df_grouped['QT'] * df_grouped['PVENDA']
+    pedidos_dict = df_grouped.to_dict('records')
+    pedidos_list_full = pedidos_dict
+    filiais_unicas = sorted(set(df_grouped['CODFILIAL'].dropna().astype(str)))
 
-# Estado inicial dos filtros
-if 'selected_clients' not in st.session_state:
-    st.session_state.selected_clients = []
-if 'selected_sellers' not in st.session_state:
-    st.session_state.selected_sellers = []
-if 'selected_filiais' not in st.session_state:
-    st.session_state.selected_filiais = []
-if 'selected_status' not in st.session_state:
-    st.session_state.selected_status = []
-if 'selected_regioes' not in st.session_state:
-    st.session_state.selected_regioes = []
+    # Filtros Avançados e Status
+    with st.container(border=True):
+        # Filtros Avançados - Filiais
+        st.markdown("**🏢 Filiais**", unsafe_allow_html=True)
+        col5, col6 = st.columns(2)
+        with col5:
+            for filial in filiais_unicas[:len(filiais_unicas)//2 + 1]:
+                if st.checkbox(f"Filial {filial}", value=filial in st.session_state.selected_filiais, key=f"filial_{filial}"):
+                    if filial not in st.session_state.selected_filiais:
+                        st.session_state.selected_filiais.append(filial)
+                else:
+                    if filial in st.session_state.selected_filiais:
+                        st.session_state.selected_filiais.remove(filial)
+        with col6:
+            for filial in filiais_unicas[len(filiais_unicas)//2 + 1:]:
+                if st.checkbox(f"Filial {filial}", value=filial in st.session_state.selected_filiais, key=f"filial_{filial}"):
+                    if filial not in st.session_state.selected_filiais:
+                        st.session_state.selected_filiais.append(filial)
+                else:
+                    if filial in st.session_state.selected_filiais:
+                        st.session_state.selected_filiais.remove(filial)
+        if st.button("Selecionar Todas as Filiais", key="select_all_filial", use_container_width=True):
+            st.session_state.selected_filiais = filiais_unicas.copy()
+        st.divider()
 
-with st.expander("🔎 Filtros Avançados"):
-    # Clientes
-    st.markdown("**🧑 Clientes**", unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        for cliente in clientes_unicos[:len(clientes_unicos)//2 + 1]:
-            if st.checkbox(cliente, value=cliente in st.session_state.selected_clients, key=f"cli_{cliente}"):
-                if cliente not in st.session_state.selected_clients:
-                    st.session_state.selected_clients.append(cliente)
-            else:
-                if cliente in st.session_state.selected_clients:
-                    st.session_state.selected_clients.remove(cliente)
-    with col2:
-        for cliente in clientes_unicos[len(clientes_unicos)//2 + 1:]:
-            if st.checkbox(cliente, value=cliente in st.session_state.selected_clients, key=f"cli2_{cliente}"):
-                if cliente not in st.session_state.selected_clients:
-                    st.session_state.selected_clients.append(cliente)
-            else:
-                if cliente in st.session_state.selected_clients:
-                    st.session_state.selected_clients.remove(cliente)
-
-    if st.button("Selecionar Todos os Clientes", key="select_all_cli", use_container_width=True):
-        st.session_state.selected_clients = clientes_unicos.copy()
-
-    st.divider()
-
-    # Vendedores
-    st.markdown("**🧑‍💼 Vendedores**", unsafe_allow_html=True)
-    col3, col4 = st.columns(2)
-    with col3:
-        for vendedor in vendedores_unicos[:len(vendedores_unicos)//2 + 1]:
-            if st.checkbox(vendedor, value=vendedor in st.session_state.selected_sellers, key=f"ven_{vendedor}"):
-                if vendedor not in st.session_state.selected_sellers:
-                    st.session_state.selected_sellers.append(vendedor)
-            else:
-                if vendedor in st.session_state.selected_sellers:
-                    st.session_state.selected_sellers.remove(vendedor)
-    with col4:
-        for vendedor in vendedores_unicos[len(vendedores_unicos)//2 + 1:]:
-            if st.checkbox(vendedor, value=vendedor in st.session_state.selected_sellers, key=f"ven2_{vendedor}"):
-                if vendedor not in st.session_state.selected_sellers:
-                    st.session_state.selected_sellers.append(vendedor)
-            else:
-                if vendedor in st.session_state.selected_sellers:
-                    st.session_state.selected_sellers.remove(vendedor)
-
-    if st.button("Selecionar Todos os Vendedores", key="select_all_vend", use_container_width=True):
-        st.session_state.selected_sellers = vendedores_unicos.copy()
-
-    st.divider()
-
-    # Filiais
-    st.markdown("**🏢 Filiais**", unsafe_allow_html=True)
-    col5, col6 = st.columns(2)
-    with col5:
-        for filial in filiais_unicas[:len(filiais_unicas)//2 + 1]:
-            if st.checkbox(f"Filial {filial}", value=filial in st.session_state.selected_filiais, key=f"fil_{filial}"):
-                if filial not in st.session_state.selected_filiais:
-                    st.session_state.selected_filiais.append(filial)
-            else:
-                if filial in st.session_state.selected_filiais:
-                    st.session_state.selected_filiais.remove(filial)
-    with col6:
-        for filial in filiais_unicas[len(filiais_unicas)//2 + 1:]:
-            if st.checkbox(f"Filial {filial}", value=filial in st.session_state.selected_filiais, key=f"fil2_{filial}"):
-                if filial not in st.session_state.selected_filiais:
-                    st.session_state.selected_filiais.append(filial)
-            else:
-                if filial in st.session_state.selected_filiais:
-                    st.session_state.selected_filiais.remove(filial)
-
-    if st.button("Selecionar Todas as Filiais", key="select_all_filial", use_container_width=True):
-        st.session_state.selected_filiais = filiais_unicas.copy()
-
-    st.divider()
-
-    # Status
-    st.markdown("**📌 Status**", unsafe_allow_html=True)
-    for stat in status_unicos:
-        if st.checkbox(stat, value=stat in st.session_state.selected_status, key=f"sta_{stat}"):
-            if stat not in st.session_state.selected_status:
-                st.session_state.selected_status.append(stat)
-        else:
-            if stat in st.session_state.selected_status:
-                st.session_state.selected_status.remove(stat)
-
-    if st.button("Selecionar Todos os Status", key="select_all_status", use_container_width=True):
-        st.session_state.selected_status = status_unicos.copy()
-
-    st.divider()
-
-    # Regiões
-    st.markdown("**🌍 Regiões**", unsafe_allow_html=True)
-    col_reg1, col_reg2 = st.columns(2)
-    with col_reg1:
-        for reg in regioes_unicas[:len(regioes_unicas)//2 + 1]:
-            if st.checkbox(f"Região {reg}", value=reg in st.session_state.selected_regioes, key=f"reg_{reg}"):
-                if reg not in st.session_state.selected_regioes:
-                    st.session_state.selected_regioes.append(reg)
-            else:
-                if reg in st.session_state.selected_regioes:
-                    st.session_state.selected_regioes.remove(reg)
-    with col_reg2:
-        for reg in regioes_unicas[len(regioes_unicas)//2 + 1:]:
-            if st.checkbox(f"Região {reg}", value=reg in st.session_state.selected_regioes, key=f"reg2_{reg}"):
-                if reg not in st.session_state.selected_regioes:
-                    st.session_state.selected_regioes.append(reg)
-            else:
-                if reg in st.session_state.selected_regioes:
-                    st.session_state.selected_regioes.remove(reg)
-
-    if st.button("Selecionar Todas as Regiões", key="select_all_regiao", use_container_width=True):
-        st.session_state.selected_regioes = regioes_unicas.copy()
-
-    st.divider()
-    # Aplicar filtros
-    if st.session_state.selected_clients:
-        pedidos_list = [p for p in pedidos_list if p['CLIENTE'] in st.session_state.selected_clients]
-    
-    if st.session_state.selected_sellers:
-        pedidos_list = [p for p in pedidos_list if p['NOME_VENDEDOR'] in st.session_state.selected_sellers]
-    
-    if st.session_state.selected_filiais:
-        pedidos_list = [p for p in pedidos_list if p['CODFILIAL'] in st.session_state.selected_filiais]
-    
-    if st.session_state.selected_status:
-        pedidos_list = [p for p in pedidos_list if p['POSICAO'] in st.session_state.selected_status]
-    
-    if st.session_state.selected_regioes:
-        pedidos_list = [p for p in pedidos_list if str(p.get('REGIAO', '')) in st.session_state.selected_regioes]
-
+        # Status
+        st.markdown("**📊 Status**", unsafe_allow_html=True)
+        col9, col10, col11, col12 = st.columns(4)
+        with col9:
+            show_liberado = st.checkbox("✅ Liberado", value=True, key="liberado")
+        with col10:
+            show_montado = st.checkbox("📦 Montado", value=True, key="montado")
+        with col11:
+            show_faturado = st.checkbox("💳 Faturado", value=True, key="faturado")
+        with col12:
+            show_cancelado = st.checkbox("❌ Cancelado", value=False, key="cancelado")
+        st.divider()
 
         # Botão Aplicar Filtros
         if st.button("Aplicar Filtros", key="apply_filters", type="primary", use_container_width=True):
@@ -363,8 +254,7 @@ with st.expander("🔎 Filtros Avançados"):
                                 search_client.lower() in str(p.get('CLIENTE', '')).lower() or 
                                 search_client.lower() in str(p.get('NUMPED', '')).lower()]
             if search_seller:
-                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENDEDOR', '')).lower()]
-                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('CODIGO_VENDEDOR', '')).lower()]
+                pedidos_list = [p for p in pedidos_list if search_seller.lower() in str(p.get('NOME_VENI', '')).lower()]
             if st.session_state.selected_filiais:
                 pedidos_list = [p for p in pedidos_list if str(p.get('CODFILIAL', '')) in st.session_state.selected_filiais]
             if not (show_liberado and show_montado and show_faturado and show_cancelado):
@@ -402,8 +292,8 @@ with st.expander("🔎 Filtros Avançados"):
                     """, unsafe_allow_html=True)
                 with col6:
                     st.markdown(f"""
-                        **Cód. Vendedor:** {pedido.get('CODIGO_VENDEDOR', 'N/A')}  
-                        **Vendedor:** {pedido.get('NOME_VENDEDOR', 'N/A')}  
+                        **Cód. Veículo:** {pedido.get('CODIGO_VEI', 'N/A')}  
+                        **Vendedor:** {pedido.get('NOME_VENI', 'N/A')}  
                         **Nº Nota:** {pedido.get('NUMNOTA', 'N/A')}  
                         **Cód. Filial:** {pedido.get('CODFILIAL', 'N/A')}  
                         **Observação:** {pedido.get('OBS', 'N/A')}  
@@ -412,7 +302,7 @@ with st.expander("🔎 Filtros Avançados"):
                         **Valor Total:** R$ {pedido.get('valor_total', 0):,.2f}
                     """, unsafe_allow_html=True)
                 st.subheader("Produtos")
-                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO_PRODUTO', 'QT', 'PVENDA', 'POSICAO']]
+                produtos_df = df_pedidos[df_pedidos['NUMPED'] == pedido.get('NUMPED', '')][['CODPROD', 'DESCRICAO', 'QT', 'PVENDA', 'POSICAO']]
                 produtos_df["VALOR_TOTAL_ITEM"] = produtos_df["QT"] * produtos_df["PVENDA"]
                 produtos_df = produtos_df.rename(columns={
                     "CODPROD": "Código Produto", "DESCRICAO": "Descrição", "QT": "Quantidade",
