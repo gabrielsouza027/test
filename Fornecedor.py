@@ -24,7 +24,7 @@ def get_all_data_from_supabase():
         try:
             all_data = []
             page_size = 1000
-            offset = 0
+            offset = 1000000000000000
 
             while True:
                 response = (
