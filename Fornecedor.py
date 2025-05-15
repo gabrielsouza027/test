@@ -64,7 +64,6 @@ async def fetch_supabase_page_async(session, table, offset, limit, date_column, 
         }
         
         # Filtros no formato query parameters do Supabase REST
-        # O filtro deve usar gte e lte para a coluna de data, com AND implícito
         url = f"{SUPABASE_URL}/rest/v1/{table}?select={','.join(SUPABASE_CONFIG['vendas']['columns'])}"
         url += f"&{date_column}=gte.{data_inicial.strftime('%Y-%m-%d')}"
         url += f"&{date_column}=lte.{data_final.strftime('%Y-%m-%d')}"
@@ -96,11 +95,10 @@ async def fetch_all_pages(table, date_column, data_inicial, data_final, limit=50
                     logger.info(f"No more data at offset {offset}. Stopping pagination.")
                     break
                 all_data.extend(data)
-                # Parar se menos de limit registros foram retornados
                 if len(data) < limit:
                     logger.info(f"Fewer than {limit} records returned ({len(data)}) at offset {offset}. Stopping pagination.")
                     break
-                await asyncio.sleep(0.5)  # Pequeno delay entre requisições
+                await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Erro em uma requisição para {table} at offset {offset}: {str(e)}")
                 continue
@@ -128,7 +126,6 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
         if all_data:
             df = pl.DataFrame(all_data)
             
-            # Verificar colunas esperadas
             missing_columns = [col for col in columns_expected if col not in df.columns]
             if missing_columns:
                 logger.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
@@ -136,9 +133,8 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 _cache[key] = pl.DataFrame()
                 return pl.DataFrame()
 
-            # Validar formato de DATA antes de parsing
             df = df.with_columns(
-                pl.col('DATA').cast(pl.Utf8).alias('DATA')  # Garantir que DATA é string
+                pl.col('DATA').cast(pl.Utf8).alias('DATA')
             )
             invalid_data = df.filter(
                 ~pl.col('DATA').str.contains(r'^\d{4}-\d{2}-\d{2}$') |
@@ -148,32 +144,26 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 logger.warning(f"Valores inválidos na coluna DATA: {invalid_data['DATA'].head(5).to_list()}")
                 st.warning(f"Detectados valores inválidos na coluna DATA do Supabase. Verifique a tabela {table}.")
 
-            # Filtrar apenas DATA com formato válido
             df = df.filter(
                 pl.col('DATA').str.contains(r'^\d{4}-\d{2}-\d{2}$')
             )
 
-            # Garantir tipos de dados
             df = df.with_columns([
                 pl.col('DATA').str.to_date(format="%Y-%m-%d", strict=False).alias('DATA'),
                 pl.col('QT').cast(pl.Float64, strict=False).fill_null(0),
                 pl.col('PVENDA').cast(pl.Float64, strict=False).fill_null(0)
             ])
 
-            # Filtrar linhas onde a conversão de DATA falhou
             df = df.filter(pl.col('DATA').is_not_null())
 
-            # Log exemplos de DATA para depuração
             logger.info(f"Amostra de valores de DATA após parsing: {df['DATA'].head(5).to_list()}")
 
-            # Calcular valor total e extrair mês/ano
             df = df.with_columns([
                 (pl.col('QT') * pl.col('PVENDA')).alias('VALOR_TOTAL_ITEM'),
                 pl.col('DATA').dt.month().alias('MES'),
                 pl.col('DATA').dt.year().alias('ANO')
             ])
 
-            # Validar ANO e MES
             invalid_ano_mes = df.filter(
                 pl.col('ANO').is_null() |
                 pl.col('MES').is_null() |
@@ -190,7 +180,6 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)
             )
 
-            # Validar dados
             if df['QT'].lt(0).any():
                 logger.warning("Quantidades negativas encontradas em 'QT'. Substituindo por 0.")
                 df = df.with_columns(pl.col('QT').clip(min=0))
@@ -231,10 +220,8 @@ def auto_reload():
 def main():
     st.title("Dashboard de Vendas")
     
-    # Chamar auto_reload
     auto_reload()
 
-    # Filtro de Data para Tabela 1
     st.subheader("Filtro de Período (Fornecedores)")
     today = datetime.today()
     col1, col2 = st.columns(2)
@@ -251,7 +238,6 @@ def main():
             key="data_final"
         )
     
-    # Converter para datetime
     data_inicial = datetime.combine(data_inicial, datetime.min.time())
     data_final = datetime.combine(data_final, datetime.max.time())
     
@@ -259,29 +245,23 @@ def main():
         st.error("A data inicial não pode ser maior que a data final.")
         return
 
-    # Buscar dados do Supabase
     with st.spinner("Carregando dados do Supabase..."):
         df = get_data_from_supabase(cache, data_inicial, data_final)
     
     if not df.is_empty():
-        # --- Primeira Tabela: Valor Total por Fornecedor por Mês ---
         st.subheader("Valor Total por Fornecedor por Mês")
-        
-        # Barra de Pesquisa
         search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
         
-                # Agrupar por fornecedor, ano e mês
         df_grouped = df.group_by(['FORNECEDOR', 'ANO', 'MES']).agg(
             VALOR_TOTAL_ITEM=pl.col('VALOR_TOTAL_ITEM').sum()
         ).sort(['FORNECEDOR', 'ANO', 'MES'])
         
-        # Verificar se df_grouped contém as colunas ANO e MES
+        # Verifica colunas necessárias
         if 'ANO' not in df_grouped.columns or 'MES' not in df_grouped.columns:
             logger.error("Colunas ANO ou MES ausentes no DataFrame agrupado.")
             st.error("Erro: Colunas ANO ou MES ausentes no DataFrame agrupado.")
             return
         
-        # Criar pivot table (ano, mes) como colunas, fornecedor em index, valores soma VALOR_TOTAL_ITEM
         try:
             pivot_df = df_grouped.pivot(
                 values='VALOR_TOTAL_ITEM',
@@ -295,7 +275,6 @@ def main():
             st.error(f"Erro ao criar pivot table: {e}")
             return
         
-        # Gerar novos nomes para as colunas de acordo com o mês-ano
         month_names = {
             1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr',
             5: 'Mai', 6: 'Jun', 7: 'Jul', 8: 'Ago',
@@ -305,15 +284,12 @@ def main():
         new_columns = ['FORNECEDOR']
         seen_columns = set(new_columns)
         
-        # Processar as colunas do pivot_df
         for col in pivot_df.columns[1:]:
             try:
-                # col é tupla (ANO, MES)
                 year, month = col
                 month = int(month)
                 month_name = month_names.get(month, f"Mês{month}")
                 col_name = f"{month_name}-{year}"
-                # Evitar duplicatas
                 if col_name in seen_columns:
                     i = 1
                     base_name = col_name
@@ -327,39 +303,32 @@ def main():
                 st.error(f"Erro ao processar colunas do pivot: {col}. Verifique os dados de ANO e MES.")
                 return
         
-        # Validar que não há duplicatas
         if len(new_columns) != len(set(new_columns)):
             logger.error(f"Colunas duplicadas detectadas: {new_columns}")
             st.error("Erro: Colunas duplicadas no pivot. Verifique os dados de ANO e MES.")
             return
         
-        # Atribuir novos nomes de colunas
         try:
             pivot_df.columns = new_columns
         except Exception as e:
             logger.error(f"Erro ao renomear colunas: {e}\n{traceback.format_exc()}")
             st.error(f"Erro ao renomear colunas: {e}")
             return
-
         
-        # Adicionar coluna de Total
         pivot_df = pivot_df.with_columns(
             Total=pl.sum_horizontal(pl.col(col) for col in pivot_df.columns if col != 'FORNECEDOR')
         )
         
-        # Filtrar fornecedores com base na busca
         if search_term:
             pivot_df = pivot_df.filter(
                 pl.col('FORNECEDOR').str.contains(search_term, case=False)
             )
         
-        # Converter para Pandas para AgGrid
         pivot_df_pandas = pivot_df.to_pandas()
         
         if pivot_df.is_empty():
             st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
         else:
-            # Configurar AgGrid
             gb = GridOptionsBuilder.from_dataframe(pivot_df_pandas)
             gb.configure_default_column(
                 sortable=True, filter=True, resizable=True, groupable=False, minWidth=100
@@ -402,7 +371,6 @@ def main():
                 theme="streamlit"
             )
             
-            # Download CSV
             csv = pivot_df_pandas.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
             st.download_button(
                 label="Download CSV - Fornecedores",
@@ -411,7 +379,6 @@ def main():
                 mime='text/csv',
             )
         
-        # --- Segunda Tabela: Quantidade Vendida por Produto por Mês ---
         st.markdown("---")
         st.subheader("Quantidade Vendida por Produto por Mês")
         
