@@ -138,7 +138,7 @@ def main():
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            height=450
+            height=300
         )
 
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
