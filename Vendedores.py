@@ -67,7 +67,7 @@ def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
         all_data = []
         offset = 0
-        limit = 1000  # Batch size reduzido para estabilidade
+        limit = 500  # Reduzido para evitar sobrecarga
         max_retries = 3
 
         # Obter o total de registros esperados
@@ -384,6 +384,12 @@ def criar_tabela_vendas_mensais_por_produto(data, fornecedor, ano):
     return tabela
 
 def main():
+    # Botão para limpar cache
+    if st.button("Limpar Cache"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
     auto_reload()
 
     st.markdown(
