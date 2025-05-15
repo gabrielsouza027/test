@@ -50,7 +50,7 @@ def carregar_dados(data_inicial="2024-01-01", data_final="2025-12-31"):
     try:
         all_data = []
         offset = 0
-        limit = 10000  # Limite ajustado para evitar sobrecarga
+        limit = 1000  # Limite ajustado para evitar sobrecarga
 
         while True:
             response = supabase.table("VWSOMELIER").select("*").gte("DATA", data_inicial).lte("DATA", data_final).range(offset, offset + limit - 1).execute()
