@@ -81,8 +81,8 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, last_
 
     try:
         all_data = []
-        limit = 1
-        max_pages = 3000
+        limit = 1000
+        max_pages = 10
         filters = []
 
         if last_update and date_column:
