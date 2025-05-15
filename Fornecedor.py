@@ -118,8 +118,19 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
         filter_query = (
             f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
         )
+        logger.info(f"Filter query: {filter_query}")
 
-        # Executar busca assíncrona
+        # Debug: Fetch a small sample without filters to check table contents
+        sample_data = asyncio.run(fetch_all_pages(table, limit=10, max_pages=1, filter_query=None))
+        if sample_data:
+            logger.info(f"Sample data (first 10 rows): {sample_data}")
+            st.write("Sample data from PCVENDEDOR2 (first 10 rows):")
+            st.json(sample_data)
+        else:
+            logger.warning("No data in PCVENDEDOR2 table (sample query).")
+            st.warning("No data found in PCVENDEDOR2 table (sample query).")
+
+        # Executar busca assíncrona com filtros
         all_data = asyncio.run(fetch_all_pages(table, limit=50000, max_pages=10000, filter_query=filter_query))
 
         if all_data:
@@ -158,8 +169,8 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             _cache[key] = df
             logger.info(f"Dados carregados com sucesso: {len(df)} registros")
         else:
-            logger.warning(f"Nenhum dado retornado da tabela {table}")
-            st.warning(f"Nenhum dado retornado da tabela {table} para o período selecionado.")
+            logger.warning(f"Nenhum dado retornado da tabela {table} para o filtro: {filter_query}")
+            st.warning(f"Nenhum dado retornado da tabela {table} para o filtro: {filter_query}")
             _cache[key] = pl.DataFrame()
             df = pl.DataFrame()
 
