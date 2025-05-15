@@ -109,42 +109,63 @@ def main():
         st.write(f"Data máxima: {df['DATA'].max().strftime('%d/%m/%Y')}")
         return
 
-    # TABELA 1
+        # TABELA 1
     st.subheader("Valor Total por Fornecedor por Mês")
     search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
-
+    
     all_months = pd.date_range(start=data_inicial, end=data_final, freq='MS')
     month_names = {
         1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
         7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
     }
     all_month_cols = [f"{month_names[d.month]}-{d.year}" for d in all_months]
-
+    
     df_filtered['ANO'] = df_filtered['DATA'].dt.year
     df_filtered['MES'] = df_filtered['DATA'].dt.month
     df_grouped = df_filtered.groupby(['FORNECEDOR', 'ANO', 'MES'])['VALOR_TOTAL_ITEM'].sum().reset_index()
     df_grouped['MES_ANO'] = df_grouped.apply(lambda row: f"{month_names[row['MES']]}-{row['ANO']}", axis=1)
-
+    
     pivot_df = df_grouped.pivot(index='FORNECEDOR', columns='MES_ANO', values='VALOR_TOTAL_ITEM').fillna(0)
-
+    
     for col in all_month_cols:
         if col not in pivot_df.columns:
             pivot_df[col] = 0
-
+    
     pivot_df = pivot_df[all_month_cols]
     pivot_df['Total'] = pivot_df.sum(axis=1)
     pivot_df = pivot_df.reset_index()
-
+    
     if search_term:
         pivot_df = pivot_df[pivot_df['FORNECEDOR'].str.contains(search_term, case=False, na=False)]
-
+    
+    # CSS personalizado para tamanho fixo da tabela
+    st.markdown(
+        """
+        <style>
+        .ag-root-wrapper {
+            width: 1000px !important;  /* Largura fixa da tabela */
+            max-width: 1000px !important;
+            margin: 0 auto;  /* Centraliza a tabela */
+        }
+        .ag-header, .ag-body-viewport {
+            width: 100% !important;
+        }
+        .ag-theme-streamlit {
+            --ag-grid-size: 6px;
+            --ag-header-height: 40px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
     if pivot_df.empty:
         st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
     else:
         gb = GridOptionsBuilder.from_dataframe(pivot_df)
-        gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=100, flex=1)
-        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", flex=2)
-
+        gb.configure_default_column(sortable=True, filter=True, resizable=False, flex=1)  # flex=1 para distribuir espaço igualmente
+        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", width=200)  # Largura fixa para a coluna Fornecedor
+    
         for col in pivot_df.columns:
             if col != "FORNECEDOR":
                 gb.configure_column(
@@ -152,19 +173,25 @@ def main():
                     type=["numericColumn"],
                     valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
                     cellRenderer="agAnimateShowChangeCellRenderer",
-                    flex=1
+                    flex=1  # Todas as colunas compartilham o espaço igualmente
                 )
-
-        gb.configure_grid_options(domLayout='autoHeight', enableRangeSelection=True)
+    
+        gb.configure_grid_options(
+            domLayout='normal',  # Evita autoHeight para usar altura fixa
+            suppressHorizontalScroll=False,  # Permite rolagem horizontal se necessário
+            autoSizeStrategy=None  # Desativa auto-ajuste para usar flex
+        )
+    
         AgGrid(
             pivot_df,
             gridOptions=gb.build(),
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            height=300
+            height=400,  # Altura fixa da tabela
+            fit_columns_on_grid_load=False  # Evita ajuste automático das colunas
         )
-
+    
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
         st.download_button("Download CSV - Fornecedores", data=csv, file_name="fornecedores.csv", mime="text/csv")
 
