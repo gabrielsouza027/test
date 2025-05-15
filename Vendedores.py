@@ -65,65 +65,39 @@ def auto_reload():
 @st.cache_data(show_spinner=False, ttl=60)
 def carregar_dados(tabela, data_inicial=None, data_final=None):
     try:
-        all_data = []
         max_retries = 3
 
-        # Obter o total de registros esperados
+        # Função para executar a consulta com retry
         @backoff.on_exception(backoff.expo, Exception, max_tries=max_retries)
-        def get_count():
-            count_query = supabase.table(tabela).select("*", count="exact", head=True)
-            if data_inicial and data_final:
-                if tabela == 'VWSOMELIER':
-                    count_query = count_query.gte('DATA', data_inicial.isoformat()).lte('DATA', data_final.isoformat())
-                elif tabela == 'PCVENDEDOR':
-                    count_query = count_query.gte('DATAPEDIDO', data_inicial.isoformat()).lte('DATAPEDIDO', data_final.isoformat())
-                else:
-                    logger.warning(f"Tabela {tabela} não reconhecida para filtro de data.")
-            return count_query.execute().count or 0
-
-        total_records = get_count()
-        logger.info(f"Total de registros esperados na tabela {tabela}: {total_records}")
-
-        # Paginação com retry
-        @backoff.on_exception(backoff.expo, Exception, max_tries=max_retries)
-        def fetch_batch(offset, limit):
+        def fetch_all():
             query = supabase.table(tabela).select("*")
             if data_inicial and data_final:
                 if tabela == 'VWSOMELIER':
                     query = query.gte('DATA', data_inicial.isoformat()).lte('DATA', data_final.isoformat())
                 elif tabela == 'PCVENDEDOR':
                     query = query.gte('DATAPEDIDO', data_inicial.isoformat()).lte('DATAPEDIDO', data_final.isoformat())
-            return query.range(offset, offset + limit - 1).execute()
+                else:
+                    logger.warning(f"Tabela {tabela} não reconhecida para filtro de data.")
+            return query.execute()
 
-        while offset < total_records:
-            try:
-                response = fetch_batch(offset, limit)
-                response_data = response.data
-                if not response_data:
-                    logger.info(f"Nenhum dado retornado para lote {offset}-{offset+limit-1} na tabela {tabela}.")
-                    break
-                all_data.extend(response_data)
-                offset += limit
-                logger.info(f"Recuperados {len(response_data)} registros da tabela {tabela}, total até agora: {len(all_data)}")
-            except Exception as e:
-                logger.error(f"Erro ao buscar lote {offset}-{offset+limit-1}: {e}")
-                if offset + limit >= total_records:
-                    break
-                continue
+        # Executar a consulta
+        response = fetch_all()
+        response_data = response.data
 
-        if not all_data:
+        if not response_data:
             logger.warning(f"Nenhum dado encontrado na tabela {tabela} para o período {data_inicial} a {data_final}.")
             return pd.DataFrame()
 
-        df = pd.DataFrame(all_data)
+        df = pd.DataFrame(response_data)
         df.columns = df.columns.str.strip()
-        
-        if total_records and len(df) < total_records:
-            logger.warning(f"Fetched {len(df)} registros, mas esperados {total_records}. Continuando com dados parciais.")
-        
+
+        logger.info kendisi
+
+        logger.info(f"Total de registros recuperados da tabela {tabela}: {len(df)}")
         return df
+
     except Exception as e:
-        logger.error(f"Erro geral ao buscar dados do Supabase para tabela {tabela}: {e}")
+        logger.error(f"Erro ao buscar dados do Supabase para tabela {tabela}: {e}")
         return pd.DataFrame()
 
 def calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, data_final):
