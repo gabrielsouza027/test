@@ -68,7 +68,7 @@ def fetch_table_data(table, page_size, offset):
 @st.cache_data(show_spinner=False, ttl=3600)
 def carregar_dados(_cache_key=datetime.now().strftime('%Y%m%d%H%M')):  # Cache_key para invalidar periodicamente
     all_data = []
-    page_size = 500  # Mantido para respostas rápidas
+    page_size = 2000  # Mantido para respostas rápidas
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
