@@ -184,7 +184,7 @@ def main():
             border: 1px solid #ddd;
         }
         .ranking-table tr:nth-child(even) {
-            background-color: #f9f9f9;
+            background-color: #f00000;
         }
         .ranking-table tr:hover {
             background-color: #ddd;
