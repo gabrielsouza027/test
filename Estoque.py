@@ -58,17 +58,13 @@ SUPABASE_CONFIG = {
 def fetch_supabase_page(table, offset, limit, filter_query=None):
     try:
         query = supabase.table(table).select("*")
-
-        # Aplicar múltiplos filtros, se fornecido
         if filter_query:
-            if isinstance(filter_query, list):
-                for filtro in filter_query:
-                    column, operator, value = filtro
+            for filtro in filter_query:
+                column, operator, value = filtro
+                if operator == "in":
+                    query = query.in_(column, value)  # 🔧 AJUSTADO
+                else:
                     query = query.filter(column, operator, value)
-            else:
-                column, operator, value = filter_query
-                query = query.filter(column, operator, value)
-
         response = query.range(offset, offset + limit - 1).execute()
         data = response.data
         logger.info(f"Recuperados {len(data)} registros da tabela {table}, offset {offset}")
@@ -91,85 +87,72 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
         all_data = []
         limit = 10000
         max_pages = 5000
-
-        # Construir filtros como lista de tuplas
         filters = []
-        if filial_filter:
-            # Exemplo: "CODFILIAL=in.('1','2')" → precisa ser quebrado
-            # Supabase-py não aceita "in." diretamente, então converta para várias condições OR se necessário
-            filters.append(("CODFILIAL", "in", ["1", "2"]))  # usa operador `in`
+
+        # 🔧 Ajustar filtro de filial
+        if filial_filter and "CODFILIAL" in filial_filter:
+            filters.append(("CODFILIAL", "in", ["1", "2"]))
 
         if last_update and date_column:
-            last_update_str = last_update.strftime('%Y-%m-%d')
-            filters.append((date_column, "gte", last_update_str))
+            filters.append((date_column, "gte", last_update.strftime('%Y-%m-%d')))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            offset = 0
-            for _ in range(max_pages):
-                futures.append(executor.submit(fetch_supabase_page, table, offset, limit, filters))
-                offset += limit
-                if offset >= limit * max_pages:
-                    break
+            futures = [
+                executor.submit(fetch_supabase_page, table, offset, limit, filters)
+                for offset in range(0, limit * max_pages, limit)
+            ]
 
             for future in concurrent.futures.as_completed(futures):
                 try:
                     data = future.result()
-                    if data:
-                        all_data.extend(data)
-                    else:
+                    if not data:
                         break
+                    all_data.extend(data)
                 except Exception as e:
                     logger.error(f"Erro em uma requisição: {e}")
-                    continue
 
-        if all_data:
-            df = pd.DataFrame(all_data)
-            missing_columns = [col for col in columns_expected if col not in df.columns]
-            if missing_columns:
-                logger.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
-                st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
-                _cache[key] = pd.DataFrame()
-                return pd.DataFrame()
-            if date_column and date_column in df.columns:
-                df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-                df = df.dropna(subset=[date_column])
-            _cache[key] = df
-            logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
-        else:
+        if not all_data:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
             st.warning(f"Nenhum dado retornado da tabela {table}.")
             _cache[key] = pd.DataFrame()
-            df = pd.DataFrame()
+            return _cache[key]
+
+        df = pd.DataFrame(all_data)
+        missing_columns = [col for col in columns_expected if col not in df.columns]
+        if missing_columns:
+            st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
+            logger.error(f"Colunas ausentes: {missing_columns}")
+            _cache[key] = pd.DataFrame()
+            return pd.DataFrame()
+
+        if date_column in df.columns:
+            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+            df = df.dropna(subset=[date_column])
+
+        _cache[key] = df
+        logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
+        return df
 
     except Exception as e:
-        logger.error(f"Erro ao buscar dados da tabela {table}: {e}")
         st.error(f"Erro ao buscar dados da tabela {table}: {e}")
+        logger.error(f"Erro geral: {e}")
         _cache[key] = pd.DataFrame()
-        df = pd.DataFrame()
+        return pd.DataFrame()
 
-    return _cache[key]
 
 
 # Função para buscar dados de vendas (VWSOMELIER)
+# Função para buscar dados de vendas (VWSOMELIER)
 def fetch_vendas_data():
     config = SUPABASE_CONFIG["vendas"]
-    # Buscar dados novos desde a última atualização
     last_update = st.session_state.get('last_vendas_update', None)
     df = fetch_supabase_data(
         cache_vendas, 
         config["table"], 
         config["columns"], 
         date_column=config["date_column"], 
-        filial_filter=config["filial_filter"], 
-        last_update=last_update
+        last_update=last_update  # 🔧 Removido `filial_filter`
     )
-    if not df.empty:
-        df['QT'] = pd.to_numeric(df['QT'], errors='coerce').fillna(0)
-        # Atualizar última data de atualização
-        if config["date_column"] in df.columns:
-            st.session_state['last_vendas_update'] = df[config["date_column"]].max()
-    return df
 
 # Função para buscar dados de estoque (ESTOQUE)
 def fetch_estoque_data():
@@ -198,12 +181,12 @@ def fetch_estoque_data():
 def auto_reload():
     if 'last_reload' not in st.session_state:
         st.session_state.last_reload = time.time()
-    
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 120:  # 30 segundos
+    if current_time - st.session_state.last_reload >= 120:  # ✅ 120 segundos
         st.session_state.last_reload = current_time
-        st.cache_data.clear()  # Limpar o cache para forçar nova busca
-        st.rerun()  # Forçar reload da página
+        st.cache_data.clear()
+        st.rerun()
+
 
 # Função principal
 def main():
