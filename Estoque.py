@@ -56,7 +56,7 @@ SUPABASE_CONFIG = {
         "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
                     "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"],
         "date_column": "DTULTENT",
-        "filial_filter": "CODFILIAL=in.('1','2')"
+        "filial_filter": None
     }
 }
 
