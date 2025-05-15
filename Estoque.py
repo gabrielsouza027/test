@@ -49,16 +49,39 @@ SUPABASE_CONFIG = {
         "table": "VWSOMELIER",
         "columns": ["CODPROD", "QT", "DESCRICAO_1", "DESCRICAO_2", "DATA"],
         "date_column": "DATA",
-        "filial_filter": None  # Removido, pois CODFILIAL não existe em VWSOMELIER
+        "filial_filter": None
     },
     "estoque": {
         "table": "ESTOQUE",
         "columns": ["CODFILIAL", "CODPROD", "QT_ESTOQUE", "QTULTENT", "DTULTENT", "DTULTSAIDA", "QTRESERV", 
                     "QTINDENIZ", "DTULTPEDCOMPRA", "BLOQUEADA", "NOME_PRODUTO"],
         "date_column": "DTULTENT",
-        "filial_filter": None
+        "filial_filter": None  # Removido para evitar filtragem incorreta
     }
 }
+
+# Função para verificar se há dados na tabela (sem filtros)
+async def check_data_existence(table):
+    try:
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Range": "0-9"  # Buscar apenas os primeiros 10 registros
+        }
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=30) as response:
+                if response.status != 200:
+                    content = await response.text()
+                    logger.error(f"Erro ao verificar dados em {table}: {content}")
+                    return False, content
+                data = await response.json()
+                logger.info(f"Verificação de dados em {table}: {len(data)} registros encontrados")
+                return len(data) > 0, data
+    except Exception as e:
+        logger.error(f"Erro ao verificar dados em {table}: {str(e)}")
+        return False, str(e)
 
 # Função para buscar dados do Supabase com paginação e retry (assíncrona)
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -73,6 +96,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         url = f"{SUPABASE_URL}/rest/v1/{table}?select=*"
         if filter_query:
             url += f"&{filter_query}"
+        logger.info(f"Executando query: {url}")
         
         async with session.get(url, headers=headers, timeout=30) as response:
             if response.status != 200:
@@ -87,7 +111,7 @@ async def fetch_supabase_page_async(session, table, offset, limit, filter_query=
         raise
 
 # Função para buscar todas as páginas de uma tabela assincronamente
-async def fetch_all_pages(table, limit=10000, max_pages=500, filter_query=None):  # Reduzido max_pages para 500
+async def fetch_all_pages(table, limit=10000, max_pages=500, filter_query=None):
     all_data = []
     async with aiohttp.ClientSession() as session:
         tasks = []
@@ -109,18 +133,23 @@ async def fetch_all_pages(table, limit=10000, max_pages=500, filter_query=None):
 
 # Função para buscar dados do Supabase com cache e Polars
 @st.cache_data(show_spinner=False, ttl=300)
-def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filial_filter=None, last_update=None):
+def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filial_filter=None, last_update=None, data_inicial=None, data_final=None):
     key = f"{table}_{last_update or 'full'}"
     if key in _cache:
         logger.info(f"Dados da tabela {table} recuperados do cache")
         return _cache[key]
 
     try:
-        # Construir filtro de data incremental, se aplicável
+        # Construir filtro de data
         filter_query = filial_filter
-        if last_update and date_column:
+        if date_column and data_inicial and data_final:
+            data_inicial_str = data_inicial.strftime('%Y-%m-%d')
+            data_final_str = data_final.strftime('%Y-%m-%d')
+            date_filter = f"{date_column}=gte.{data_inicial_str}&{date_column}=lte.{data_final_str}"
+            filter_query = f"{filter_query}&{date_filter}" if filial_filter else date_filter
+        elif last_update and date_column:
             last_update_str = last_update.strftime('%Y-%m-%d')
-            filter_query = f"{filial_filter}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
+            filter_query = f"{filter_query}&{date_column}=gte.{last_update_str}" if filial_filter else f"{date_column}=gte.{last_update_str}"
 
         # Executar busca assíncrona
         all_data = asyncio.run(fetch_all_pages(table, limit=10000, max_pages=500, filter_query=filter_query))
@@ -162,7 +191,7 @@ def fetch_supabase_data(_cache, table, columns_expected, date_column=None, filia
     return _cache[key]
 
 # Função para buscar dados de vendas (VWSOMELIER)
-def fetch_vendas_data():
+def fetch_vendas_data(data_inicial, data_final):
     config = SUPABASE_CONFIG["vendas"]
     last_update = st.session_state.get('last_vendas_update', None)
     df = fetch_supabase_data(
@@ -171,7 +200,9 @@ def fetch_vendas_data():
         config["columns"], 
         date_column=config["date_column"], 
         filial_filter=config["filial_filter"], 
-        last_update=last_update
+        last_update=last_update,
+        data_inicial=data_inicial,
+        data_final=data_final
     )
     if not df.is_empty():
         df = df.with_columns(pl.col('QT').cast(pl.Float64, strict=False).fill_null(0))
@@ -182,7 +213,7 @@ def fetch_vendas_data():
     return df
 
 # Função para buscar dados de estoque (ESTOQUE)
-def fetch_estoque_data():
+def fetch_estoque_data(data_inicial, data_final):
     config = SUPABASE_CONFIG["estoque"]
     last_update = st.session_state.get('last_estoque_update', None)
     df = fetch_supabase_data(
@@ -191,7 +222,9 @@ def fetch_estoque_data():
         config["columns"], 
         date_column=config["date_column"], 
         filial_filter=config["filial_filter"], 
-        last_update=last_update
+        last_update=last_update,
+        data_inicial=data_inicial,
+        data_final=data_final
     )
     if not df.is_empty():
         df = df.with_columns([
@@ -228,13 +261,33 @@ def main():
     # Chamar auto_reload para verificar se precisa atualizar
     auto_reload()
 
-    # Definir as datas de início e fim para os últimos 2 meses
-    data_final = datetime.date.today()  # 15/05/2025
-    data_inicial = data_final - datetime.timedelta(days=60)  # 16/03/2025
+    # Verificar existência de dados nas tabelas
+    with st.spinner("Verificando existência de dados..."):
+        has_vendas, vendas_info = asyncio.run(check_data_existence("VWSOMELIER"))
+        has_estoque, estoque_info = asyncio.run(check_data_existence("ESTOQUE"))
+    
+    if not has_vendas:
+        st.error(f"A tabela VWSOMELIER não contém dados ou está inacessível. Detalhes: {vendas_info}")
+    if not has_estoque:
+        st.error(f"A tabela ESTOQUE não contém dados ou está inacessível. Detalhes: {estoque_info}")
+    
+    if not has_vendas or not has_estoque:
+        return
+
+    # Seletor de datas
+    st.markdown("### Filtro de Período")
+    data_final = st.date_input("Data Final", value=datetime.date.today())
+    data_inicial = st.date_input("Data Inicial", value=data_final - datetime.timedelta(days=60))
+
+    if data_inicial > data_final:
+        st.error("A Data Inicial não pode ser maior que a Data Final.")
+        return
+
+    logger.info(f"Buscando dados de {data_inicial} até {data_final}")
 
     # Buscar dados de vendas (VWSOMELIER)
     with st.spinner("Carregando dados de vendas..."):
-        vendas_df = fetch_vendas_data()
+        vendas_df = fetch_vendas_data(data_inicial, data_final)
 
     if vendas_df.is_empty():
         st.warning("Não há vendas para o período selecionado.")
@@ -245,7 +298,7 @@ def main():
 
     # Buscar dados de estoque (ESTOQUE)
     with st.spinner("Carregando dados de estoque..."):
-        estoque_df = fetch_estoque_data()
+        estoque_df = fetch_estoque_data(data_inicial, data_final)
 
     if estoque_df.is_empty():
         st.warning("Não há dados de estoque para o período selecionado.")
