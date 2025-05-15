@@ -144,13 +144,8 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
             # Filtrar linhas onde a conversão de DATA falhou
             df = df.filter(pl.col('DATA').is_not_null())
 
-            # Validar dados
-            if df['QT'].lt(0).any():
-                logger.warning("Quantidades negativas encontradas em 'QT'. Substituindo por 0.")
-                df = df.with_columns(pl.col('QT').clip(min=0))
-            if df['PVENDA'].lt(0).any():
-                logger.warning("Preços negativos encontrados em 'PVENDA'. Substituindo por 0.")
-                df = df.with_columns(pl.col('PVENDA').clip(min=0))
+            # Log exemplos de DATA para depuração
+            logger.info(f"Amostra de valores de DATA: {df['DATA'].head(5).to_list()}")
 
             # Calcular valor total e extrair mês/ano
             df = df.with_columns([
@@ -158,6 +153,32 @@ def get_data_from_supabase(_cache, data_inicial, data_final):
                 pl.col('DATA').dt.month().alias('MES'),
                 pl.col('DATA').dt.year().alias('ANO')
             ])
+
+            # Validar ANO e MES
+            df = df.filter(
+                pl.col('ANO').is_not_null() &
+                pl.col('MES').is_not_null() &
+                pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) &
+                pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)  # Ajuste o intervalo de anos conforme necessário
+            )
+
+            # Log valores inválidos de DATA, ANO e MES
+            invalid_data = df.filter(
+                pl.col('DATA').is_null() |
+                pl.col('MES').is_null() |
+                ~pl.col('MES').cast(pl.Int32, strict=False).is_in([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) |
+                ~pl.col('ANO').cast(pl.Int32, strict=False).is_between(2000, 2030)
+            )
+            if not invalid_data.is_empty():
+                logger.warning(f"Linhas com DATA, ANO ou MES inválidos: {invalid_data.select(['DATA', 'ANO', 'MES']).to_dicts()[:5]}")
+
+            # Validar dados
+            if	df['QT'].lt(0).any():
+                logger.warning("Quantidades negativas encontradas em 'QT'. Substituindo por 0.")
+                df = df.with_columns(pl.col('QT').clip(min=0))
+            if df['PVENDA'].lt(0).any():
+                logger.warning("Preços negativos encontrados em 'PVENDA'. Substituindo por 0.")
+                df = df.with_columns(pl.col('PVENDA').clip(min=0))
 
             _cache[key] = df
             logger.info(f"Dados carregados com sucesso: {len(df)} registros")
