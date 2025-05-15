@@ -203,7 +203,7 @@ def main():
         'created_at': 'first', 'NUMCAR': 'first', 'DATA': 'first', 'CODCLI': 'first', 'CLIENTE': 'first',
         'CODIGO_VENDEDOR': 'first', 'NOME_VENDEDOR': 'first', 'NUMNOTA': 'first', 'OBS': 'first',
         'OBS1': 'first', 'OBS2': 'first', 'POSICAO': 'first', 'CODFILIAL': 'first',
-        'MUNICIPIO': 'first', 'QT': 'sum', 'PVENDA': 'mean'
+        'MUNICIPIO': 'first', 'valor_item': 'sum'
     }).reset_index()
 
     df_grouped = df_grouped.rename(columns={'valor_item': 'valor_total'})
