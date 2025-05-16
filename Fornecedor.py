@@ -147,14 +147,13 @@ def main():
     if search_term:
         pivot_df = pivot_df[pivot_df['FORNECEDOR'].str.contains(search_term, case=False, na=False)]
     
-    # CSS personalizado para tamanho fixo da tabela
     st.markdown(
         """
         <style>
         .ag-root-wrapper {
-            width: 1000px !important;  /* Largura fixa da tabela */
+            width: 1000px !important;
             max-width: 1000px !important;
-            margin: 0 auto;  /* Centraliza a tabela */
+            margin: 0 auto;
         }
         .ag-header, .ag-body-viewport {
             width: 100% !important;
@@ -227,20 +226,12 @@ def main():
     df_filtered = df_filtered_range[(df_filtered_range['MES'] == selected_mes_num) & (df_filtered_range['ANO'] == selected_ano)]
 
     if not df_filtered.empty:
-        pivot_produtos = df_filtered.groupby(
-            ['CODPROD', 'PRODUTO', 'CODIGOVENDEDOR', 'VENDEDOR', 'CODCLI', 'CLIENTE', 'FORNECEDOR']
-        )['QT'].sum().reset_index()
-
-        pivot_produtos = pivot_produtos[['PRODUTO', 'CODPROD', 'VENDEDOR', 'CODIGOVENDEDOR', 'CLIENTE', 'CODCLI', 'FORNECEDOR', 'QT']]
+        pivot_produtos = df_filtered.groupby(['PRODUTO', 'FORNECEDOR', 'ANO', 'MES'])['QT'].sum().reset_index()
+        pivot_produtos = pivot_produtos[['PRODUTO', 'FORNECEDOR', 'QT']]
 
         gb_produtos = GridOptionsBuilder.from_dataframe(pivot_produtos)
         gb_produtos.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=100)
         gb_produtos.configure_column("PRODUTO", pinned="left", width=250)
-        gb_produtos.configure_column("CODPROD", width=120)
-        gb_produtos.configure_column("VENDEDOR", width=250)
-        gb_produtos.configure_column("CODIGOVENDEDOR", width=120)
-        gb_produtos.configure_column("CLIENTE", width=250)
-        gb_produtos.configure_column("CODCLI", width=120)
         gb_produtos.configure_column("FORNECEDOR", width=250)
         gb_produtos.configure_column("QT", type=["numericColumn"], valueFormatter="Math.floor(x).toLocaleString('pt-BR')", width=120)
 
