@@ -165,9 +165,15 @@ def main():
     <style>
     .ag-root-wrapper {
         width: 100% !important;
+        max-width: 100% !important;
     }
     .ag-header-cell {
         white-space: normal !important;
+        word-wrap: break-word !important;
+        padding: 5px !important;
+    }
+    .ag-cell {
+        padding: 5px !important;
         word-wrap: break-word !important;
     }
     </style>
@@ -243,15 +249,22 @@ def main():
             "buttons": ["reset", "apply"],
         }
     )
-    gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
+    gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=100)
     gb.configure_grid_options(
         domLayout='normal',
-        autoSizeColumns=True
+        autoSizeColumns=True,
+        suppressColumnVirtualisation=True
     )
     grid_options = gb.build()
 
     # Forçar ajuste de largura
     grid_options['fit_columns_on_grid_load'] = True
+    grid_options['defaultColDef'] = {
+        'minWidth': 100,
+        'wrapText': True,
+        'autoHeight': True,
+        'flex': 1
+    }
 
     df_display = df.copy()
     for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
@@ -259,7 +272,7 @@ def main():
     for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']:
         df_display[col] = df_display[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else "")
 
-    AgGrid(df_display if not df_display.empty else pd.DataFrame(columns=df_display.columns), gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, theme='streamlit')
+    AgGrid(df_display if not df_display.empty else pd.DataFrame(columns=df_display.columns), gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, theme='streamlit', height=500)
 
     if not sem_estoque_df.empty:
         st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
@@ -304,14 +317,21 @@ def main():
                 "buttons": ["reset", "apply"],
             }
         )
-        gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
+        gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=100)
         gb.configure_grid_options(
             domLayout='normal',
-            autoSizeColumns=True
+            autoSizeColumns=True,
+            suppressColumnVirtualisation=True
         )
         grid_options = gb.build()
 
         grid_options['fit_columns_on_grid_load'] = True
+        grid_options['defaultColDef'] = {
+            'minWidth': 150,
+            'wrapText': True,
+            'autoHeight': True,
+            'flex': 1
+        }
 
         df_sem_estoque_display = sem_estoque_df_renomeado.copy()
         df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
@@ -319,7 +339,7 @@ def main():
         df_sem_estoque_display['QUANTIDADE VENDIDA'] = df_sem_estoque_display['QUANTIDADE VENDIDA'].apply(lambda x: f"{x:,.0f}")
         df_sem_estoque_display['ESTOQUE TOTAL'] = df_sem_estoque_display['ESTOQUE TOTAL'].apply(lambda x: f"{x:,.0f}")
 
-        AgGrid(df_sem_estoque_display if not df_sem_estoque_display.empty else pd.DataFrame(columns=df_sem_estoque_display.columns), gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, theme='streamlit')
+        AgGrid(df_sem_estoque_display if not df_sem_estoque_display.empty else pd.DataFrame(columns=df_sem_estoque_display.columns), gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, theme='streamlit', height=500)
 
 if __name__ == "__main__":
     main()
