@@ -72,7 +72,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, last_update=N
 
     try:
         all_data = []
-        limit = 1000  # Aumentado para reduzir número de requisições
+        limit = 100  # Aumentado para reduzir número de requisições
         max_pages = 10  # Ajustado para evitar excesso de chamadas
         filters = []
 
@@ -156,12 +156,6 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    # Botão para recarregar manualmente
-    if st.button("🔄 Atualizar Dados"):
-        st.cache_data.clear()
-        st.rerun()
-
-    auto_reload()
 
     data_final = datetime.date.today()
     data_inicial = data_final - datetime.timedelta(days=60)
