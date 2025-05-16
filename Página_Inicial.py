@@ -7,7 +7,6 @@ import locale
 import plotly.express as px
 import logging
 from concurrent.futures import ThreadPoolExecutor
-import json
 import os
 import pickle
 
@@ -28,7 +27,6 @@ SUPABASE_TABLES = [
         "table_name": "PCPEDC",
         "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
     },
-    # Adicione mais tabelas aqui, se necessário
 ]
 
 # Cabeçalhos comuns para todas as requisições
@@ -44,11 +42,10 @@ def get_headers():
         st.stop()
 
 # Função para carregar dados de uma única tabela com suporte a filtros de data
-def fetch_table_data(table, page_size=150023 , last_fetched=None):
+def fetch_table_data(table, page_size=150023, last_fetched=None):
     table_name = table["table_name"]
     url = table["url"]
     if last_fetched:
-        # Adicionar filtro para buscar apenas registros após last_fetched
         url += f"&DATA_PEDIDO=gt.{last_fetched.strftime('%Y-%m-%dT%H:%M:%S')}"
     logger.info(f"Carregando dados da tabela {table_name} com URL: {url}")
     all_data = []
@@ -104,7 +101,7 @@ def carregar_dados(_last_fetched=None):
         # Carregar cache existente
         cached_data = load_cache()
         cached_df = pl.DataFrame(cached_data) if cached_data else pl.DataFrame()
-        logger.info(f"Colunas no cache: {cached_df.columns} (total: {len(cached_df.columns)})")
+        logger.info(f"Colunas no cache: {cached_df.columns} (total: {len(cached_df.columns)}), tipos: {dict(cached_df.schema)}")
 
         # Carregar dados novos em paralelo usando ThreadPoolExecutor
         with ThreadPoolExecutor() as executor:
@@ -122,34 +119,36 @@ def carregar_dados(_last_fetched=None):
 
         # Converter novos dados para Polars DataFrame
         new_df = pl.DataFrame(all_data) if all_data else pl.DataFrame()
-        logger.info(f"Colunas nos novos dados: {new_df.columns} (total: {len(new_df.columns)})")
+        logger.info(f"Colunas nos novos dados: {new_df.columns} (total: {len(new_df.columns)}), tipos: {dict(new_df.schema)}")
 
         # Definir o schema esperado
         expected_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED', 'VLTOTAL']
 
         # Alinhar schemas
         if not new_df.is_empty():
-            # Adicionar colunas ausentes no new_df com valores nulos
             for col in expected_columns:
                 if col not in new_df.columns:
                     new_df = new_df.with_columns(pl.lit(None).alias(col))
-            # Calcular VLTOTAL no new_df
-            new_df = new_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
+            new_df = new_df.with_columns([
+                pl.col('PVENDA').cast(pl.Float64).fill_null(0),
+                pl.col('QT').cast(pl.Float64).fill_null(0),
+                (pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0)
+            ])
 
         if not cached_df.is_empty():
-            # Adicionar colunas ausentes no cached_df com valores nulos
             for col in expected_columns:
                 if col not in cached_df.columns:
                     cached_df = cached_df.with_columns(pl.lit(None).alias(col))
-            # Recalcular VLTOTAL no cached_df para consistência
-            cached_df = cached_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
+            cached_df = cached_df.with_columns([
+                pl.col('PVENDA').cast(pl.Float64).fill_null(0),
+                pl.col('QT').cast(pl.Float64).fill_null(0),
+                (pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0)
+            ])
 
         # Forçar o mesmo conjunto de colunas em ambos os DataFrames
         if not cached_df.is_empty() and not new_df.is_empty():
-            # Identificar colunas comuns
             common_columns = list(set(cached_df.columns) & set(new_df.columns))
             logger.info(f"Colunas comuns: {common_columns}")
-            # Reordenar e manter apenas colunas comuns
             cached_df = cached_df.select(common_columns)
             new_df = new_df.select(common_columns)
         elif not cached_df.is_empty():
@@ -157,15 +156,9 @@ def carregar_dados(_last_fetched=None):
         elif not new_df.is_empty():
             cached_df = new_df.clone().clear()
 
-        # Adicionar VLTOTAL como última coluna após alinhamento
-        if 'VLTOTAL' not in cached_df.columns:
-            cached_df = cached_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
-        if 'VLTOTAL' not in new_df.columns:
-            new_df = new_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
-
         # Combinar dados
         combined_df = pl.concat([cached_df, new_df]).unique(subset=["NUMPED"])
-        logger.info(f"Colunas após concatenação: {combined_df.columns} (total: {len(combined_df.columns)})")
+        logger.info(f"Colunas após concatenação: {combined_df.columns} (total: {len(combined_df.columns)}), tipos: {dict(combined_df.schema)}")
 
         # Verificar se as colunas necessárias existem
         required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
@@ -177,13 +170,13 @@ def carregar_dados(_last_fetched=None):
 
         # Garantir tipos de dados
         combined_df = combined_df.with_columns([
+            pl.col('PVENDA').cast(pl.Float64).fill_null(0),
+            pl.col('QT').cast(pl.Float64).fill_null(0),
             pl.col('CODFILIAL').cast(pl.Utf8),
             pl.col('NUMPED').cast(pl.Utf8),
-            pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False)
+            pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%dT%H:%M:%S", strict=False),
+            (pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL').fill_null(0)
         ])
-
-        # Recalcular VLTOTAL para consistência
-        combined_df = combined_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL'))
 
         # Filtrar apenas filiais 1 e 2
         combined_df = combined_df.filter(pl.col('CODFILIAL').is_in(['1', '2']))
@@ -302,6 +295,14 @@ def main():
     st.title('Dashboard de Faturamento')
     st.markdown("### Resumo de Vendas")
 
+    # Botão para limpar cache
+    if st.button("Limpar Cache"):
+        if os.path.exists("cache.pkl"):
+            os.remove("cache.pkl")
+            st.session_state.last_fetched = None
+            st.cache_data.clear()
+            st.rerun()
+
     # Inicializar session state para last_fetched
     if 'last_fetched' not in st.session_state:
         st.session_state.last_fetched = None
@@ -309,7 +310,6 @@ def main():
     # Carregar dados com cache
     with st.spinner("Carregando dados do Supabase..."):
         data = carregar_dados(_last_fetched=st.session_state.last_fetched)
-        # Atualizar last_fetched para a data mais recente
         if not data.is_empty():
             st.session_state.last_fetched = data['DATA_PEDIDO'].max()
 
@@ -330,7 +330,6 @@ def main():
     if filial_2:
         filiais_selecionadas.append('2')
 
-    # Verificar se pelo menos uma filial está selecionada
     if not filiais_selecionadas:
         st.warning("Por favor, selecione pelo menos uma filial para exibir os dados.")
         return
@@ -454,7 +453,6 @@ def main():
     st.markdown("---")
     st.subheader("Comparação de Vendas por Mês e Ano")
 
-    # Seletores de data com tratamento para dados vazios
     col_data1, col_data2 = st.columns(2)
     default_date = pd.to_datetime('2024-01-01')
     with col_data1:
@@ -478,7 +476,6 @@ def main():
         st.error("A Data Inicial não pode ser maior que a Data Final.")
         return
 
-    # Filtrar dados pelo período selecionado
     df_periodo = data_filtrada.filter(
         (pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) &
         (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final))
@@ -488,21 +485,17 @@ def main():
         st.warning("Nenhum dado disponível para o período selecionado.")
         return
 
-    # Adicionar colunas de ano e mês
     df_periodo = df_periodo.with_columns([
         pl.col('DATA_PEDIDO').dt.year().cast(pl.Utf8).alias('Ano'),
         pl.col('DATA_PEDIDO').dt.month().alias('Mês')
     ])
 
-    # Agrupar por ano e mês
     vendas_por_mes_ano = df_periodo.group_by(['Ano', 'Mês']).agg(
         Valor_Total_Vendido=pl.col('VLTOTAL').sum()
     ).sort(['Ano', 'Mês'])
 
-    # Converter para Pandas para compatibilidade com Plotly
     vendas_por_mes_ano_pandas = vendas_por_mes_ano.to_pandas()
 
-    # Criar gráfico de linhas com uma linha por ano
     fig = px.line(
         vendas_por_mes_ano_pandas,
         x='Mês',
@@ -513,7 +506,6 @@ def main():
         markers=True
     )
 
-    # Ajustes visuais
     fig.update_layout(
         title_font_size=20,
         xaxis_title_font_size=16,
