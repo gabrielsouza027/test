@@ -130,6 +130,10 @@ class SupabaseConnection:
                 content_range = response.headers.get("Content-Range", "")
                 logger.info(f"Content-Range: {content_range}")
                 
+                # Handle Content-Range with '*' (unknown total)
+                if "/" in content_range and content_range.split("/")[-1] == "*":
+                    logger.warning(f"Content-Range contém '*', usando len(data) para paginação")
+                
                 # Stop if fewer than page_size records are returned
                 if len(data) < page_size:
                     break
