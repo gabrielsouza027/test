@@ -114,18 +114,19 @@ class SupabaseConnection:
                     logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
                     break
                 all_data.extend(data)
-                offset += len(data)  # Use actual data length to handle partial pages
+                offset += len(data)
                 logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total: {len(all_data)}")
                 
-                # Check Content-Range to ensure all data is fetched
+                # Log Content-Range for debugging
                 content_range = response.headers.get("Content-Range", "")
-                if content_range:
-                    total = int(content_range.split("/")[-1]) if "/" in content_range else len(all_data)
-                    if len(all_data) >= total:
-                        break
+                logger.info(f"Content-Range: {content_range}")
+                
+                # Check if all data is fetched
+                if len(data) < page_size:
+                    break  # No more data to fetch
             except requests.exceptions.RequestException as e:
                 logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-                return []
+                return all_data  # Return partial data if available
 
         # Log unique CODFILIAL values for debugging
         codfiliais = set(record.get('CODFILIAL') for record in all_data)
@@ -152,7 +153,7 @@ class SupabaseConnection:
                         record.get('NUMPED'),
                         pvenda,
                         qt,
-                        str(record.get('CODFILIAL', '')),  # Ensure CODFILIAL is string
+                        str(record.get('CODFILIAL', '')),
                         record.get('DATA_PEDIDO'),
                         vltotal,
                         record.get('DATA_PEDIDO')
@@ -204,6 +205,261 @@ class SupabaseConnection:
             return data
         except Exception as e:
             logger.error(f"Erro ao sincronizar dados: {e}")
+            # Fallback to cache if sync fails
+            data = self.load_from_cache()
+            if not data.is_empty():
+                logger.info(f"Usando dados do cache após falha de sincronização: {len(data)} registros")
+                return data
+            st.error(f"Erro ao sincronizar dados: {e}")
+            return pl.DataFrame()
+
+# Função para carregar dados com cache
+@st.cache_data(show_spinner=False, ttl=900)
+def carregar_dados():
+    try:
+        supabase = SupabaseConnection(
+            url=st.secrets["SUPABASE_URL"],
+            key=st.secrets["SUPABASE_KEY"]
+        )
+        # Sincronizar dados (carrega do cache e busca novos dados)
+        data = supabase.sync_data()
+        if data.is_empty():
+            logger.warning("Nenhum dado disponível após sincronização")
+            st.error("Nenhum dado disponível. Verifique a conexão com o Supabase.")
+            return pl.DataFrame()
+
+        # Filtrar apenas filiais 1 e 2હ
+
+System: It looks like the artifact content was cut off. The error you're encountering is due to an invalid `Content-Range` header from the Supabase API, causing a parsing issue in the `fetch_new_data` method. Below is the corrected script, completing the artifact with the fix for the `invalid literal for int() with base 10: '*'` error, along with additional error handling and debugging to ensure all data is fetched correctly. This update retains the same artifact ID as it's an update to the previous script.
+
+### Changes Made
+1. **Fixed `Content-Range` Parsing**:
+   - Modified `fetch_new_data` to handle cases where `Content-Range` contains `*` by relying on the number of records returned (`len(data)`) to determine when to stop pagination.
+   - Removed the problematic `int(content_range.split("/")[-1])` logic and used `len(data) < page_size` as the stopping condition.
+2. **Preserve Partial Data**:
+   - If an HTTP request fails, `fetch_new_data` returns any data fetched so far, preventing complete data loss.
+3. **Fallback to Cache**:
+   - In `sync_data`, if synchronization fails, the script attempts to load existing cache data to avoid returning an empty DataFrame.
+4. **Enhanced Logging**:
+   - Added logging for `Content-Range` headers and data summaries to help diagnose pagination issues.
+5. **Completed Artifact**:
+   - Included the full script, ensuring no truncation, with all previous fixes (e.g., line chart date input, 7-day fetch window, `CODFILIAL` debugging).
+
+### Updated Script
+
+<xaiArtifact artifact_id="f24e11b0-cac9-40c8-bf1a-3ba0d13a9627" artifact_version_id="1d7f25a5-b29a-4677-be84-bd3a4f7d3ba2" title="streamlit_app.py" contentType="text/python">
+import streamlit as st
+import polars as pl
+import pandas as pd
+import requests
+import sqlite3
+from datetime import datetime, timedelta, date
+import locale
+import plotly.express as px
+import logging
+from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+from urllib.parse import urlencode
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Definir o local para a formatação monetária
+try:
+    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+except locale.Error:
+    logger.warning("Locale 'pt_BR.UTF-8' não disponível, usando padrão.")
+    locale.setlocale(locale.LC_ALL, '')
+
+# Configuração da conexão com o Supabase
+class SupabaseConnection:
+    def __init__(self, url, key, db_path="supabase_cache.db"):
+        self.base_url = url
+        self.key = key
+        self.db_path = db_path
+        self.headers = {
+            "apikey": self.key,
+            "Authorization": f"Bearer {self.key}",
+            "Accept": "application/json"
+        }
+        self.tables = [
+            {
+                "table_name": "PCPEDC",
+                "url": f"{self.base_url}/rest/v1/PCPEDC?select=*"
+            }
+        ]
+        self._init_cache()
+
+    def _init_cache(self):
+        """Initialize SQLite database for caching."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS PCPEDC (
+                        NUMPED TEXT PRIMARY KEY,
+                        PVENDA REAL,
+                        QT INTEGER,
+                        CODFILIAL TEXT,
+                        DATA_PEDIDO TEXT,
+                        VLTOTAL REAL,
+                        last_updated TEXT
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Erro ao inicializar cache SQLite: {e}")
+            st.error(f"Erro ao inicializar cache: {e}")
+            raise
+
+    def _get_latest_timestamp(self):
+        """Get the latest DATA_PEDIDO from the cache, or a default for initial fetch."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT MAX(DATA_PEDIDO) FROM PCPEDC")
+                result = cursor.fetchone()[0]
+                if result:
+                    # Use a 7-day window to catch delayed updates
+                    latest_date = datetime.fromisoformat(result.replace('Z', '+00:00'))
+                    return (latest_date - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                return "1970-01-01T00:00:00Z"
+        except sqlite3.Error as e:
+            logger.error(f"Erro ao obter último timestamp: {e}")
+            return "1970-01-01T00:00:00Z"
+
+    def fetch_new_data(self, table, page_size=1000):
+        """Fetch data from Supabase, either all data (initial fetch) or new data."""
+        table_name = table["table_name"]
+        latest_timestamp = self._get_latest_timestamp()
+        logger.info(f"Buscando dados da tabela {table_name} após {latest_timestamp}")
+
+        # Construir URL com filtro para novos dados (skip filter for initial fetch)
+        url = table["url"]
+        if latest_timestamp != "1970-01-01T00:00:00Z":
+            query_params = {
+                "DATA_PEDIDO": f"gte.{latest_timestamp}",
+                "order": "DATA_PEDIDO.asc"
+            }
+            url = f"{url}&{urlencode(query_params)}"
+        
+        all_data = []
+        offset = 0
+        while True:
+            headers = self.headers.copy()
+            headers["Range"] = f"{offset}-{offset + page_size - 1}"
+            try:
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                if not data:
+                    logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
+                    break
+                all_data.extend(data)
+                offset += len(data)
+                logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total: {len(all_data)}")
+                
+                # Log Content-Range for debugging
+                content_range = response.headers.get("Content-Range", "")
+                logger.info(f"Content-Range: {content_range}")
+                
+                # Stop if fewer than page_size records are returned
+                if len(data) < page_size:
+                    break
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
+                return all_data  # Return partial data if available
+
+        # Log unique CODFILIAL values for debugging
+        codfiliais = set(record.get('CODFILIAL') for record in all_data)
+        logger.info(f"Valores de CODFILIAL encontrados: {codfiliais}")
+
+        return all_data
+
+    def update_cache(self, data):
+        """Update SQLite cache with new or updated data."""
+        if not data:
+            return
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                for record in data:
+                    pvenda = float(record.get('PVENDA', 0)) if record.get('PVENDA') else 0
+                    qt = int(record.get('QT', 0)) if record.get('QT') else 0
+                    vltotal = pvenda * qt
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO PCPEDC (
+                            NUMPED, PVENDA, QT, CODFILIAL, DATA_PEDIDO, VLTOTAL, last_updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        record.get('NUMPED'),
+                        pvenda,
+                        qt,
+                        str(record.get('CODFILIAL', '')),
+                        record.get('DATA_PEDIDO'),
+                        vltotal,
+                        record.get('DATA_PEDIDO')
+                    ))
+                conn.commit()
+                logger.info(f"Cache atualizado com {len(data)} registros")
+        except sqlite3.Error as e:
+            logger.error(f"Erro ao atualizar cache: {e}")
+            st.error(f"Erro ao atualizar cache: {e}")
+
+    def load_from_cache(self):
+        """Load all data from SQLite cache into a Polars DataFrame."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                query = "SELECT NUMPED, PVENDA, QT, CODFILIAL, DATA_PEDIDO, VLTOTAL FROM PCPEDC"
+                df = pl.read_database(query, conn)
+                if df.is_empty():
+                    logger.warning("Cache vazio")
+                    return pl.DataFrame()
+                # Garantir tipos de dados
+                df = df.with_columns([
+                    pl.col('PVENDA').cast(pl.Float32).fill_null(0),
+                    pl.col('QT').cast(pl.Int32).fill_null(0),
+                    pl.col('CODFILIAL').cast(pl.Utf8),
+                    pl.col('NUMPED').cast(pl.Utf8),
+                    pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False),
+                    pl.col('VLTOTAL').cast(pl.Float32).fill_null(0)
+                ])
+                logger.info(f"Carregados {len(df)} registros do cache")
+                return df
+        except Exception as e:
+            logger.error(f"Erro ao carregar dados do cache: {e}")
+            return pl.DataFrame()
+
+    def sync_data(self):
+        """Synchronize cache with Supabase by fetching new data."""
+        try:
+            with ThreadPoolExecutor() as executor:
+                new_data = list(executor.map(self.fetch_new_data, self.tables))
+            all_new_data = []
+            for result in new_data:
+                all_new_data.extend(result)
+            self.update_cache(all_new_data)
+            data = self.load_from_cache()
+            # Log data summary for debugging
+            if not data.is_empty():
+                date_range = (data['DATA_PEDIDO'].min(), data['DATA_PEDIDO'].max())
+                logger.info(f"Dados carregados: {len(data)} registros, intervalo de datas: {date_range}")
+            return data
+        except Exception as e:
+            logger.error(f"Erro ao sincronizar dados: {e}")
+            # Fallback to cache if sync fails
+            data = self.load_from_cache()
+            if not data.is_empty():
+                logger.info(f"Usando dados do cache após falha de sincronização: {len(data)} registros")
+                return data
             st.error(f"Erro ao sincronizar dados: {e}")
             return pl.DataFrame()
 
@@ -469,7 +725,7 @@ def main():
     with col2:
         st.plotly_chart(grafico_pizza_variacao(["Semana Atual", "Semana Passada"], [abs(faturamento_semanal_atual), abs(faturamento_semanal_passada)], "Variação de Faturamento (Semana)"), use_container_width=True)
     with col3:
-        st.plotly_chart(grafico_pizza_variacao(["isuus Atual", "Mês Anterior"], [abs(faturamento_mes_atual), abs(faturamento_mes_anterior)], "Variação de Faturamento (Mês)"), use_container_width=True)
+        st.plotly_chart(grafico_pizza_variacao(["Mês Atual", "Mês Anterior"], [abs(faturamento_mes_atual), abs(faturamento_mes_anterior)], "Variação de Faturamento (Mês)"), use_container_width=True)
     with col4:
         st.plotly_chart(grafico_pizza_variacao(["Pedidos Mês Atual", "Pedidos Mês Passado"], [abs(pedidos_mes_atual), abs(pedidos_mes_anterior)], "Variação de Pedidos (Mês)"), use_container_width=True)
     with col5:
@@ -505,7 +761,7 @@ def main():
     # Filtrar dados pelo período selecionado
     df_periodo = data_filtrada.filter(
         (pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) & 
-        (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final))
+        (pl.col('DATA PEDIDO') <= pd.to_datetime(data_final))
     )
 
     if df_periodo.is_empty():
