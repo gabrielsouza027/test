@@ -105,15 +105,6 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             df = df.dropna(subset=[date_column])
 
-        # Validação adicional: verificar número de linhas
-        if len(df) == 0:
-            st.warning(f"Os dados da tabela {table} estão vazios após conversão de datas.")
-            logger.warning(f"Dados vazios após conversão de datas para {table}")
-        else:
-            logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
-            st.info(f"Total de {len(df)} registros carregados da tabela {table} para o período de {start_date} a {end_date}.")
-
-        return df
 
     except Exception as e:
         st.error(f"Erro ao buscar dados da tabela {table}: {e}")
@@ -167,12 +158,7 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    # Botão para recarregar manualmente
-    if st.button("🔄 Atualizar Dados"):
-        st.cache_data.clear()
-        st.rerun()
 
-    auto_reload()
 
     data_final = datetime.date.today()  # 15 de maio de 2025, 21:24 -03
     data_inicial = data_final - datetime.timedelta(days=60)
@@ -263,7 +249,7 @@ def main():
         if sem_estoque_df.empty:
             st.info("Não há produtos vendidos sem estoque.")
         else:
-            st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
+            st.subheader("Produtos Sem Estoque com Venda nos Últimos 2 Meses")
 
             sem_estoque_df_renomeado = sem_estoque_df[sem_estoque_df['QT_ESTOQUE'].isna() | (sem_estoque_df['QT_ESTOQUE'] <= 0)]
             sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
