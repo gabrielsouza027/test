@@ -73,7 +73,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, last_update=N
     try:
         all_data = []
         limit = 100  # Aumentado para reduzir número de requisições
-        max_pages = 1000000  # Ajustado para evitar excesso de chamadas
+        max_pages = 2000  # Ajustado para evitar excesso de chamadas
         filters = []
 
         if last_update and date_column:
