@@ -105,7 +105,14 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             df = df.dropna(subset=[date_column])
 
-        logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
+        # Validação adicional: verificar número de linhas
+        if len(df) == 0:
+            st.warning(f"Os dados da tabela {table} estão vazios após conversão de datas.")
+            logger.warning(f"Dados vazios após conversão de datas para {table}")
+        else:
+            logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
+            st.info(f"Total de {len(df)} registros carregados da tabela {table} para o período de {start_date} a {end_date}.")
+
         return df
 
     except Exception as e:
@@ -116,7 +123,6 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 def fetch_vendas_data(start_date=None, end_date=None):
     """Busca dados de vendas."""
     config = SUPABASE_CONFIG["vendas"]
-    last_update = st.session_state.get('last_vendas_update', None)
     df = fetch_supabase_data(
         table=config["table"],
         columns_expected=config["columns"],
@@ -129,7 +135,6 @@ def fetch_vendas_data(start_date=None, end_date=None):
 def fetch_estoque_data(start_date=None, end_date=None):
     """Busca dados de estoque."""
     config = SUPABASE_CONFIG["estoque"]
-    last_update = st.session_state.get('last_estoque_update', None)
     df = fetch_supabase_data(
         table=config["table"],
         columns_expected=config["columns"],
@@ -169,7 +174,7 @@ def main():
 
     auto_reload()
 
-    data_final = datetime.date.today()  # 15 de maio de 2025, 21:20 -03
+    data_final = datetime.date.today()  # 15 de maio de 2025, 21:24 -03
     data_inicial = data_final - datetime.timedelta(days=60)
 
     with st.spinner("Carregando dados de vendas..."):
@@ -189,9 +194,8 @@ def main():
         merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
         sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
 
-        # Filtro múltiplo com st.multiselect para estoque
-        unique_products = estoque_df['CODPROD'].unique().tolist()
-        selected_products = st.multiselect("Selecione os Códigos de Produto", unique_products, default=unique_products[:5])
+        # Barra de pesquisa para estoque
+        search_query_estoque = st.text_input("Pesquisar no Estoque (Código ou Nome do Produto)", "")
 
         df = estoque_df.copy()
         df = df.rename(columns={
@@ -208,9 +212,12 @@ def main():
             'BLOQUEADA': 'Quantidade Bloqueada'
         })
 
-        # Aplicar filtro múltiplo
-        if selected_products:
-            df = df[df['Código do Produto'].isin(selected_products)]
+        # Aplicar filtro de pesquisa para estoque
+        if search_query_estoque:
+            df = df[
+                (df['Código do Produto'].astype(str).str.contains(search_query_estoque, case=False, na=False)) |
+                (df['Nome do Produto'].str.contains(search_query_estoque, case=False, na=False))
+            ]
 
         df['Quantidade Total'] = df[['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada']].fillna(0).sum(axis=1)
 
@@ -223,10 +230,24 @@ def main():
         st.subheader("✅ Estoque")
         st.markdown("Use a paginação para ver mais linhas.")
         gb = GridOptionsBuilder.from_dataframe(df)
-        gb.configure_default_column(editable=False, sortable=True, resizable=False)
+        gb.configure_default_column(editable=False, sortable=True, resizable=True, filter=True)
+        # Configurar filtro de multiseleção para "Código do Produto"
+        gb.configure_column(
+            "Código do Produto",
+            filter="agSetFilter",
+            filterParams={
+                "values": df['Código do Produto'].unique().tolist(),
+                "filterOptions": ["contains", "notContains"],
+                "suppressMiniFilter": False,
+                "buttons": ["reset", "apply"],
+            }
+        )
         gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)  # 10 linhas por página
         gb.configure_grid_options(domLayout='normal')
         grid_options = gb.build()
+
+        # Ajustar largura das colunas para preencher a tela
+        grid_options['fit_columns_on_grid_load'] = True
 
         # Altura fixa com paginação
         height = 300  # Altura fixa
@@ -261,18 +282,35 @@ def main():
                 'CÓDIGO PRODUTO', 'NOME DO PRODUTO', 'QUANTIDADE VENDIDA', 'ESTOQUE TOTAL'
             ]]
 
-            # Filtro múltiplo com st.multiselect para produtos sem estoque
-            unique_products_sem_estoque = sem_estoque_df_renomeado['CÓDIGO PRODUTO'].unique().tolist()
-            selected_products_sem_estoque = st.multiselect("Selecione os Códigos de Produto Sem Estoque", unique_products_sem_estoque, default=unique_products_sem_estoque[:5])
+            # Barra de pesquisa para produtos sem estoque
+            search_query_sem_estoque = st.text_input("Pesquisar em Produtos Sem Estoque (Código ou Nome do Produto)", "")
 
-            if selected_products_sem_estoque:
-                sem_estoque_df_renomeado = sem_estoque_df_renomeado[sem_estoque_df_renomeado['CÓDIGO PRODUTO'].isin(selected_products_sem_estoque)]
+            # Aplicar filtro de pesquisa para produtos sem estoque
+            if search_query_sem_estoque:
+                sem_estoque_df_renomeado = sem_estoque_df_renomeado[
+                    (sem_estoque_df_renomeado['CÓDIGO PRODUTO'].astype(str).str.contains(search_query_sem_estoque, case=False, na=False)) |
+                    (sem_estoque_df_renomeado['NOME DO PRODUTO'].str.contains(search_query_sem_estoque, case=False, na=False))
+                ]
 
             gb = GridOptionsBuilder.from_dataframe(sem_estoque_df_renomeado)
-            gb.configure_default_column(editable=False, sortable=True, resizable=False)
+            gb.configure_default_column(editable=False, sortable=True, resizable=True, filter=True)
+            # Configurar filtro de multiseleção para "CÓDIGO PRODUTO"
+            gb.configure_column(
+                "CÓDIGO PRODUTO",
+                filter="agSetFilter",
+                filterParams={
+                    "values": sem_estoque_df_renomeado['CÓDIGO PRODUTO'].unique().tolist(),
+                    "filterOptions": ["contains", "notContains"],
+                    "suppressMiniFilter": False,
+                    "buttons": ["reset", "apply"],
+                }
+            )
             gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)  # 10 linhas por página
             gb.configure_grid_options(domLayout='normal')
             grid_options = gb.build()
+
+            # Ajustar largura das colunas para preencher a tela
+            grid_options['fit_columns_on_grid_load'] = True
 
             # Altura fixa com paginação
             height_sem_estoque = 300  # Altura fixa
