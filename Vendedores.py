@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
@@ -232,7 +233,7 @@ def exibir_grafico_vendas_por_vendedor(data, vendedor_selecionado, ano_seleciona
         total_pedidos=('NUMPED', 'nunique'),
     ).reset_index().rename(columns={'DATA': 'MÊS'})
 
-    vendas massive, vendas_mensais = vendas_mensais.merge(vendas_por_mes, on='MÊS', how='left').fillna({
+    vendas_mensais = vendas_mensais.merge(vendas_por_mes, on='MÊS', how='left').fillna({
         'total_vendas': 0,
         'total_clientes': 0,
         'total_pedidos': 0
@@ -325,7 +326,7 @@ def criar_tabela_vendas_mensais(data, tipo_filtro, valores_filtro, vendedor=None
         logger.error(f"Erro ao processar dados: {str(e)}")
         return pd.DataFrame()
 
-def criar_tabela_vendas_mensais_por/produto(data, fornecedor, ano):
+def criar_tabela_vendas_mensais_por_produto(data, fornecedor, ano):
     data_filtrada = data[(data['FORNECEDOR'] == fornecedor) & (data['DATAPEDIDO'].dt.year == ano)].copy()
 
     if data_filtrada.empty:
@@ -349,221 +350,202 @@ def criar_tabela_vendas_mensais_por/produto(data, fornecedor, ano):
     return tabela
 
 def main():
+    try:
+        auto_reload()  # Verificar se é necessário reload
 
-    st.markdown(
-        """
-        <div style="display: flex; align-items: center;">
-            <img src="https://cdn-icons-png.flaticon.com/512/1028/1028011.png" 
-                 width="40" style="margin-right: 10px;">
-            <h2 style="margin: 0;"> Detalhes Vendedores</h2>
-        </div>
-        """,
-        unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center;">
+                <img src="https://cdn-icons-png.flaticon.com/512/1028/1028011.png" 
+                     width="40" style="margin-right: 10px;">
+                <h2 style="margin: 0;"> Detalhes Vendedores</h2>
+            </div>
+            """,
+            unsafe_allow_html=True)
 
-    st.markdown("### Resumo de Vendas")
-    
-    st.markdown(
-        """
-        <div style="display: flex; align-items: center;">
-            <img src="https://cdn-icons-png.flaticon.com/512/6428/6428747.png" 
-                 width="40" style="margin-right: 10px;">
-            <p style="margin: 0;">Filtro</p>
-        </div>
-        """,
-        unsafe_allow_html=True)
-    data_inicial = st.date_input("Data Inicial", value=date(2024,1, 1))
-    data_final = st.date_input("Data Final", value=date(2025, 5, 14))
-
-    if data_inicial > data_final:
-        logger.error("A Data Inicial não pode ser maior que a Data Final.")
-        return
-
-    with st.spinner("Carregando dados do Supabase..."):
-        data_vwsomelier = carregar_dados('VWSOMELIER', data_inicial, data_final)
-        data_pcpedc = carregar_dados('PCVENDEDOR', data_inicial, data_final)
-    
-    if data_vwsomelier.empty or data_pcpedc.empty:
-        logger.error("Não foi possível carregar os dados do Supabase.")
-        return
-
-    data_inicial = pd.to_datetime(data_inicial)
-    data_final = pd.to_datetime(data_final)
-    vendedores, data_filtrada = calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, data_final)
-
-    if not vendedores.empty:
-        exibir_detalhes_vendedores(vendedores)
-        vendedores_sorted = vendedores['NOME'].str.strip().str.upper().sort_values().reset_index(drop=True)
-
-        if 'ALTOMERCADO' in vendedores_sorted.values:
-            vendedor_default = vendedores_sorted[vendedores_sorted == 'ALTOMERCADO'].index[0]
-        else:
-            vendedor_default = 0
-
-        vendedor_default = int(vendedor_default)
-        vendedores_display = vendedores['NOME'].str.strip().sort_values().reset_index(drop=True)
-        vendedor_selecionado = st.selectbox("Selecione um Vendedor", vendedores_display, index=vendedor_default)
-        ano_selecionado = st.selectbox("Selecione um Ano para o Gráfico", [2024, 2025], index=1 if datetime.now().year == 2025 else 0)
-        exibir_grafico_vendas_por_vendedor(data_filtrada, vendedor_selecionado, ano_selecionado)
-    else:
-        logger.warning("Não há dados para o período selecionado.")
-
-    st.markdown("---")
-    st.markdown("## Detalhamento Venda Produto ##")
-    st.markdown("### Filtro de Período")
-    vendas_data_inicial = st.date_input("Data Inicial para Vendas", value=date(2024, 1, 1), key="vendas_inicial")
-    vendas_data_final = st.date_input("Data Final para Vendas", value=date(2025, 5, 14), key="vendas_final")
-
-    if vendas_data_inicial > vendas_data_final:
-        logger.error("A Data Inicial não pode ser maior que a Data Final na seção de vendas por cliente.")
-        return
-
-    with st.spinner("Carregando dados de vendas..."):
-        data_vendas = carregar_dados('PCVENDEDOR', vendas_data_inicial, vendas_data_final)
-
-    if data_vendas.empty:
-        logger.error("Dados de vendas não puderam ser carregados para o período selecionado.")
-        return
-
-    data_vendas['DATAPEDIDO'] = pd.to_datetime(data_vendas['DATAPEDIDO'], errors='coerce')
-    data_vendas = data_vendas.dropna(subset=['DATAPEDIDO'])
-    vendas_data_inicial = pd.to_datetime(vendas_data_inicial)
-    vendas_data_final = pd.to_datetime(vendas_data_final)
-    data_vendas = data_vendas[(data_vendas['DATAPEDIDO'] >= vendas_data_inicial) & 
-                              (data_vendas['DATAPEDIDO'] <= vendas_data_final)].copy()
-
-    if data_vendas.empty:
-        logger.warning("Nenhum dado encontrado para o período selecionado na seção de vendas por cliente.")
-        return
-
-    opcoes_filtro = []
-    if 'FORNECEDOR' in data_vendas.columns:
-        opcoes_filtro.append("Fornecedor")
-    if 'PRODUTO' in data_vendas.columns:
-        opcoes_filtro.append("Produto")
-
-    if not opcoes_filtro:
-        logger.error("Nenhum filtro disponível.")
-        st.stop()
-
-    tipo_filtro = st.radio(
-        "Filtrar por:", 
-        opcoes_filtro, 
-        horizontal=True,
-        key="filtro_principal_radio"
-    )
-
-    col_filtros, col_bloqueado = st.columns(2)
-
-    with col_filtros:
-        if tipo_filtro == "Fornecedor":
-            fornecedores = sorted(data_vendas['FORNECEDOR'].dropna().unique())
-            selecionar_todos = st.checkbox(
-                "Selecionar Todos os Fornecedores", 
-                key="todos_fornecedores_check"
-            )
-            if selecionar_todos:
-                itens_selecionados = fornecedores
-                placeholder = "Todos os fornecedores selecionados"
-            else:
-                itens_selecionados = st.multiselect(
-                    "Selecione os fornecedores:",
-                    fornecedores,
-                    key="fornecedores_multiselect"
-                )
-                placeholder = None
-            
-            if selecionar_todos:
-                st.text(placeholder)
+        st.markdown("### Resumo de Vendas")
         
-        elif tipo_filtro == "Produto":
-            produtos = sorted(data_vendas['PRODUTO'].dropna().unique())
-            selecionar_todos = st.checkbox(
-                "Selecionar Todos os Produtos", 
-                key="todos_produtos_check"
-            )
-            if selecionar_todos:
-                itens_selecionados = produtos
-                placeholder = "Todos os produtos selecionados"
-            else:
-                itens_selecionados = st.multiselect(
-                    "Selecione os produtos:",
-                    produtos,
-                    key="produtos_multiselect"
-                )
-                placeholder = None
-            
-            if selecionar_todos:
-                st.text(placeholder)
-    
-    with col_bloqueado:
-        if 'BLOQUEADO' in data_vendas.columns:
-            filtro_bloqueado = st.radio(
-                "Clientes:", 
-                ["Todos", "Bloqueado", "Não bloqueado"],
-                horizontal=True,
-                key="filtro_bloqueado_radio"
-            )
-        else:
-            filtro_bloqueado = "Todos"
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center;">
+                <img src="https://cdn-icons-png.flaticon.com/512/6428/6428747.png" 
+                     width="40" style="margin-right: 10px;">
+                <p style="margin: 0;">Filtro</p>
+            </div>
+            """,
+            unsafe_allow_html=True)
+        data_inicial = st.date_input("Data Inicial", value=date(2024, 1, 1))
+        data_final = st.date_input("Data Final", value=date(2025, 5, 14))
 
-    vendedores = sorted(data_vendas['VENDEDOR'].dropna().unique())
-    selecionar_todos_vendedores = st.checkbox(
-        "Selecionar Todos os Vendedores", 
-        key="todos_vendedores_check"
-    )
-    if selecionar_todos_vendedores:
-        vendedores_selecionados = vendedores
-        st.text("Todos os vendedores selecionados")
-    else:
-        vendedores_selecionados = st.multiselect(
-            "Filtrar por Vendedor (opcional):",
-            vendedores,
-            key="vendedores_multiselect"
-        )
-
-    if st.button("Gerar Relatório", key="gerar_relatorio_btn"):
-        if not itens_selecionados:
-            logger.warning("Nenhum item selecionado para gerar o relatório.")
+        if data_inicial > data_final:
+            logger.error("A Data Inicial não pode ser maior que a Data Final.")
+            st.error("A Data Inicial não pode ser maior que a Data Final.")
             return
 
-        with st.spinner("Processando dados..."):
-            if 'BLOQUEADO' in data_vendas.columns:
-                if filtro_bloqueado == "Bloqueado":
-                    data_vendas = data_vendas[data_vendas['BLOQUEADO'] == 'S'].copy()
-                elif filtro_bloqueado == "Não bloqueado":
-                    data_vendas = data_vendas[data_vendas['BLOQUEADO'] == 'N'].copy()
-            
-            if not vendedores_selecionados or len(vendedores_selecionados) == len(vendedores):
-                tabela = criar_tabela_vendas_mensais(data_vendas, tipo_filtro, itens_selecionados)
-                if not tabela.empty:
-                    gb = GridOptionsBuilder.from_dataframe(tabela)
-                    gb.configure_default_column(filter=True, sortable=True, resizable=True)
-                    gb.configure_column("TOTAL", filter=False)
-                    grid_options = gb.build()
+        with st.spinner("Carregando dados do Supabase..."):
+            data_vwsomelier = carregar_dados('VWSOMELIER', data_inicial, data_final)
+            data_pcpedc = carregar_dados('PCVENDEDOR', data_inicial, data_final)
+        
+        if data_vwsomelier.empty or data_pcpedc.empty:
+            logger.error("Não foi possível carregar os dados do Supabase.")
+            st.error("Não foi possível carregar os dados do Supabase.")
+            return
 
-                    AgGrid(
-                        tabela,
-                        gridOptions=grid_options,
-                        update_mode=GridUpdateMode.NO_UPDATE,
-                        fit_columns_on_grid_load=False,
-                        height=400,
-                        allow_unsafe_jscode=True,
-                    )
+        data_inicial = pd.to_datetime(data_inicial)
+        data_final = pd.to_datetime(data_final)
+        vendedores, data_filtrada = calcular_detalhes_vendedores(data_vwsomelier, data_pcpedc, data_inicial, data_final)
 
-                    csv = tabela.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
-                    st.download_button(
-                        f"📥 Baixar CSV - {tipo_filtro}", 
-                        data=csv,
-                        file_name=f"vendas_{tipo_filtro.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime='text/csv'
-                    )
-                else:
-                    logger.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)}")
-            
+        if not vendedores.empty:
+            exibir_detalhes_vendedores(vendedores)
+            vendedores_sorted = vendedores['NOME'].str.strip().str.upper().sort_values().reset_index(drop=True)
+
+            if 'ALTOMERCADO' in vendedores_sorted.values:
+                vendedor_default = vendedores_sorted[vendedores_sorted == 'ALTOMERCADO'].index[0]
             else:
-                for vendedor in vendedores_selecionados:
-                    st.markdown(f"#### Vendedor: {vendedor}")
-                    tabela = criar_tabela_vendas_mensais(data_vendas, tipo_filtro, itens_selecionados, vendedor)
+                vendedor_default = 0
+
+            vendedor_default = int(vendedor_default)
+            vendedores_display = vendedores['NOME'].str.strip().sort_values().reset_index(drop=True)
+            vendedor_selecionado = st.selectbox("Selecione um Vendedor", vendedores_display, index=vendedor_default)
+            ano_selecionado = st.selectbox("Selecione um Ano para o Gráfico", [2024, 2025], index=1 if datetime.now().year == 2025 else 0)
+            exibir_grafico_vendas_por_vendedor(data_filtrada, vendedor_selecionado, ano_selecionado)
+        else:
+            logger.warning("Não há dados para o período selecionado.")
+            st.warning("Não há dados para o período selecionado.")
+
+        st.markdown("---")
+        st.markdown("## Detalhamento Venda Produto ##")
+        st.markdown("### Filtro de Período")
+        vendas_data_inicial = st.date_input("Data Inicial para Vendas", value=date(2024, 1, 1), key="vendas_inicial")
+        vendas_data_final = st.date_input("Data Final para Vendas", value=date(2025, 5, 14), key="vendas_final")
+
+        if vendas_data_inicial > vendas_data_final:
+            logger.error("A Data Inicial não pode ser maior que a Data Final na seção de vendas por cliente.")
+            st.error("A Data Inicial não pode ser maior que a Data Final na seção de vendas por cliente.")
+            return
+
+        with st.spinner("Carregando dados de vendas..."):
+            data_vendas = carregar_dados('PCVENDEDOR', vendas_data_inicial, vendas_data_final)
+
+        if data_vendas.empty:
+            logger.error("Dados de vendas não puderam ser carregados para o período selecionado.")
+            st.error("Dados de vendas não puderam ser carregados para o período selecionado.")
+            return
+
+        data_vendas['DATAPEDIDO'] = pd.to_datetime(data_vendas['DATAPEDIDO'], errors='coerce')
+        data_vendas = data_vendas.dropna(subset=['DATAPEDIDO'])
+        vendas_data_inicial = pd.to_datetime(vendas_data_inicial)
+        vendas_data_final = pd.to_datetime(vendas_data_final)
+        data_vendas = data_vendas[(data_vendas['DATAPEDIDO'] >= vendas_data_inicial) & 
+                                (data_vendas['DATAPEDIDO'] <= vendas_data_final)].copy()
+
+        if data_vendas.empty:
+            logger.warning("Nenhum dado encontrado para o período selecionado na seção de vendas por cliente.")
+            st.warning("Nenhum dado encontrado para o período selecionado na seção de vendas por cliente.")
+            return
+
+        opcoes_filtro = []
+        if 'FORNECEDOR' in data_vendas.columns:
+            opcoes_filtro.append("Fornecedor")
+        if 'PRODUTO' in data_vendas.columns:
+            opcoes_filtro.append("Produto")
+
+        if not opcoes_filtro:
+            logger.error("Nenhum filtro disponível.")
+            st.error("Nenhum filtro disponível.")
+            st.stop()
+
+        tipo_filtro = st.radio(
+            "Filtrar por:", 
+            opcoes_filtro, 
+            horizontal=True,
+            key="filtro_principal_radio"
+        )
+
+        col_filtros, col_bloqueado = st.columns(2)
+
+        with col_filtros:
+            if tipo_filtro == "Fornecedor":
+                fornecedores = sorted(data_vendas['FORNECEDOR'].dropna().unique())
+                selecionar_todos = st.checkbox(
+                    "Selecionar Todos os Fornecedores", 
+                    key="todos_fornecedores_check"
+                )
+                if selecionar_todos:
+                    itens_selecionados = fornecedores
+                    placeholder = "Todos os fornecedores selecionados"
+                else:
+                    itens_selecionados = st.multiselect(
+                        "Selecione os fornecedores:",
+                        fornecedores,
+                        key="fornecedores_multiselect"
+                    )
+                    placeholder = None
+                
+                if selecionar_todos:
+                    st.text(placeholder)
+            
+            elif tipo_filtro == "Produto":
+                produtos = sorted(data_vendas['PRODUTO'].dropna().unique())
+                selecionar_todos = st.checkbox(
+                    "Selecionar Todos os Produtos", 
+                    key="todos_produtos_check"
+                )
+                if selecionar_todos:
+                    itens_selecionados = produtos
+                    placeholder = "Todos os produtos selecionados"
+                else:
+                    itens_selecionados = st.multiselect(
+                        "Selecione os produtos:",
+                        produtos,
+                        key="produtos_multiselect"
+                    )
+                    placeholder = None
+                
+                if selecionar_todos:
+                    st.text(placeholder)
+        
+        with col_bloqueado:
+            if 'BLOQUEADO' in data_vendas.columns:
+                filtro_bloqueado = st.radio(
+                    "Clientes:", 
+                    ["Todos", "Bloqueado", "Não bloqueado"],
+                    horizontal=True,
+                    key="filtro_bloqueado_radio"
+                )
+            else:
+                filtro_bloqueado = "Todos"
+
+        vendedores = sorted(data_vendas['VENDEDOR'].dropna().unique())
+        selecionar_todos_vendedores = st.checkbox(
+            "Selecionar Todos os Vendedores", 
+            key="todos_vendedores_check"
+        )
+        if selecionar_todos_vendedores:
+            vendedores_selecionados = vendedores
+            st.text("Todos os vendedores selecionados")
+        else:
+            vendedores_selecionados = st.multiselect(
+                "Filtrar por Vendedor (opcional):",
+                vendedores,
+                key="vendedores_multiselect"
+            )
+
+        if st.button("Gerar Relatório", key="gerar_relatorio_btn"):
+            if not itens_selecionados:
+                logger.warning("Nenhum item selecionado para gerar o relatório.")
+                st.warning("Nenhum item selecionado para gerar o relatório.")
+                return
+
+            with st.spinner("Processando dados..."):
+                if 'BLOQUEADO' in data_vendas.columns:
+                    if filtro_bloqueado == "Bloqueado":
+                        data_vendas = data_vendas[data_vendas['BLOQUEADO'] == 'S'].copy()
+                    elif filtro_bloqueado == "Não bloqueado":
+                        data_vendas = data_vendas[data_vendas['BLOQUEADO'] == 'N'].copy()
+                
+                if not vendedores_selecionados or len(vendedores_selecionados) == len(vendedores):
+                    tabela = criar_tabela_vendas_mensais(data_vendas, tipo_filtro, itens_selecionados)
                     if not tabela.empty:
                         gb = GridOptionsBuilder.from_dataframe(tabela)
                         gb.configure_default_column(filter=True, sortable=True, resizable=True)
@@ -577,19 +559,53 @@ def main():
                             fit_columns_on_grid_load=False,
                             height=400,
                             allow_unsafe_jscode=True,
-                            wrapText=True,
-                            autoHeight=True
                         )
 
                         csv = tabela.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
                         st.download_button(
-                            f"📥 Baixar CSV - {tipo_filtro} - {vendedor}", 
+                            f"📥 Baixar CSV - {tipo_filtro}", 
                             data=csv,
-                            file_name=f"vendas_{tipo_filtro.lower()}_{vendedor}_{datetime.now().strftime('%Y%m%d')}.csv",
+                            file_name=f"vendas_{tipo_filtro.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
                             mime='text/csv'
                         )
                     else:
-                        logger.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)} e vendedor {vendedor}")
+                        logger.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)}")
+                        st.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)}")
+                
+                else:
+                    for vendedor in vendedores_selecionados:
+                        st.markdown(f"#### Vendedor: {vendedor}")
+                        tabela = criar_tabela_vendas_mensais(data_vendas, tipo_filtro, itens_selecionados, vendedor)
+                        if not tabela.empty:
+                            gb = GridOptionsBuilder.from_dataframe(tabela)
+                            gb.configure_default_column(filter=True, sortable=True, resizable=True)
+                            gb.configure_column("TOTAL", filter=False)
+                            grid_options = gb.build()
+
+                            AgGrid(
+                                tabela,
+                                gridOptions=grid_options,
+                                update_mode=GridUpdateMode.NO_UPDATE,
+                                fit_columns_on_grid_load=False,
+                                height=400,
+                                allow_unsafe_jscode=True,
+                                wrapText=True,
+                                autoHeight=True
+                            )
+
+                            csv = tabela.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
+                            st.download_button(
+                                f"📥 Baixar CSV - {tipo_filtro} - {vendedor}", 
+                                data=csv,
+                                file_name=f"vendas_{tipo_filtro.lower()}_{vendedor}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                mime='text/csv'
+                            )
+                        else:
+                            logger.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)} e vendedor {vendedor}")
+                            st.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)} e vendedor {vendedor}")
+    except Exception as e:
+        logger.error(f"Erro no main: {e}")
+        st.error("Ocorreu um erro ao executar o aplicativo. Verifique os logs para mais detalhes.")
 
 if __name__ == "__main__":
-
+    main()
