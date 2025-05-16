@@ -104,6 +104,7 @@ def carregar_dados(_last_fetched=None):
         # Carregar cache existente
         cached_data = load_cache()
         cached_df = pl.DataFrame(cached_data) if cached_data else pl.DataFrame()
+        logger.info(f"Colunas no cache: {cached_df.columns} (total: {len(cached_df.columns)})")
 
         # Carregar dados novos em paralelo usando ThreadPoolExecutor
         with ThreadPoolExecutor() as executor:
@@ -121,30 +122,53 @@ def carregar_dados(_last_fetched=None):
 
         # Converter novos dados para Polars DataFrame
         new_df = pl.DataFrame(all_data) if all_data else pl.DataFrame()
+        logger.info(f"Colunas nos novos dados: {new_df.columns} (total: {len(new_df.columns)})")
 
-        # Alinhar schemas antes da concatenação
-        required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
+        # Definir o schema esperado
+        expected_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED', 'VLTOTAL']
+
+        # Alinhar schemas
         if not new_df.is_empty():
-            # Adicionar colunas ausentes no new_df com valores nulos, se necessário
-            for col in required_columns:
+            # Adicionar colunas ausentes no new_df com valores nulos
+            for col in expected_columns:
                 if col not in new_df.columns:
                     new_df = new_df.with_columns(pl.lit(None).alias(col))
             # Calcular VLTOTAL no new_df
-            new_df = new_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL').fill_null(0))
+            new_df = new_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
 
         if not cached_df.is_empty():
-            # Adicionar colunas ausentes no cached_df com valores nulos, se necessário
-            for col in required_columns + ['VLTOTAL']:
+            # Adicionar colunas ausentes no cached_df com valores nulos
+            for col in expected_columns:
                 if col not in cached_df.columns:
                     cached_df = cached_df.with_columns(pl.lit(None).alias(col))
-            # Garantir que VLTOTAL esteja calculado no cached_df
-            if 'VLTOTAL' not in cached_df.columns:
-                cached_df = cached_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL').fill_null(0))
+            # Recalcular VLTOTAL no cached_df para consistência
+            cached_df = cached_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
 
-        # Combinar dados com schema alinhado
+        # Forçar o mesmo conjunto de colunas em ambos os DataFrames
+        if not cached_df.is_empty() and not new_df.is_empty():
+            # Identificar colunas comuns
+            common_columns = list(set(cached_df.columns) & set(new_df.columns))
+            logger.info(f"Colunas comuns: {common_columns}")
+            # Reordenar e manter apenas colunas comuns
+            cached_df = cached_df.select(common_columns)
+            new_df = new_df.select(common_columns)
+        elif not cached_df.is_empty():
+            new_df = cached_df.clone().clear()
+        elif not new_df.is_empty():
+            cached_df = new_df.clone().clear()
+
+        # Adicionar VLTOTAL como última coluna após alinhamento
+        if 'VLTOTAL' not in cached_df.columns:
+            cached_df = cached_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
+        if 'VLTOTAL' not in new_df.columns:
+            new_df = new_df.with_columns((pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0))
+
+        # Combinar dados
         combined_df = pl.concat([cached_df, new_df]).unique(subset=["NUMPED"])
+        logger.info(f"Colunas após concatenação: {combined_df.columns} (total: {len(combined_df.columns)})")
 
-        # Verificar se as colunas necessárias existem após a concatenação
+        # Verificar se as colunas necessárias existem
+        required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
         missing_columns = [col for col in required_columns if col not in combined_df.columns]
         if missing_columns:
             logger.error(f"Colunas ausentes nos dados: {missing_columns}")
@@ -160,7 +184,7 @@ def carregar_dados(_last_fetched=None):
             pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False)
         ])
 
-        # Recalcular VLTOTAL no combined_df para consistência
+        # Recalcular VLTOTAL para consistência
         combined_df = combined_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL'))
 
         # Filtrar apenas filiais 1 e 2
