@@ -178,7 +178,7 @@ def calcular_faturamento(data, hoje, ontem, semana_inicial, semana_passada_inici
     faturamento_hoje = data.filter(pl.col('DATA_PEDIDO') == hoje)['VLTOTAL'].sum()
     faturamento_ontem = data.filter(pl.col('DATA_PEDIDO') == ontem)['VLTOTAL'].sum()
     faturamento_semanal_atual = data.filter((pl.col('DATA_PEDIDO') >= semana_inicial) & (pl.col('DATA_PEDIDO') <= hoje))['VLTOTAL'].sum()
-    faturamento_semanal_passada = data.filter((pl.col('DATA_PEDIDO') >= semana_pass and (pl.col('DATA_PEDIDO') < semana_inicial))['VLTOTAL'].sum()
+    faturamento_semanal_passada = data.filter((pl.col('DATA_PEDIDO') >= semana_passada_inicial) and (pl.col('DATA_PEDIDO') < semana_inicial))['VLTOTAL'].sum()
     return faturamento_hoje, faturamento_ontem, faturamento_semanal_atual, faturamento_semanal_passada
 
 def calcular_quantidade_pedidos(data, hoje, ontem, semana_inicial, semana_passada_inicial):
