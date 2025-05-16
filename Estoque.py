@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client, ClientOptions
+from supabase import create_client, Client
 import datetime
 import logging
 import time
@@ -23,7 +23,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("Erro: SUPABASE_URL ou SUPABASE_KEY não estão definidos.")
     st.stop()
 
-# Inicializar cliente Supabase com timeout
+# Inicializar cliente Supabase
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
@@ -65,25 +65,29 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
         raise
 
 @st.cache_data(show_spinner=False, ttl=900)
-def fetch_supabase_data(table, columns_expected, date_column=None, last_update=None):
+def fetch_supabase_data(table, columns_expected, date_column=None, start_date=None, end_date=None):
     """Busca dados do Supabase com cache."""
-    key = f"{table}_{last_update or 'full'}"
+    key = f"{table}_{start_date or 'full'}_{end_date or 'full'}"
     logger.info(f"Buscando dados da tabela {table}, chave: {key}")
 
     try:
         all_data = []
-        limit = 100  # Aumentado para reduzir número de requisições
-        max_pages = 10  # Ajustado para evitar excesso de chamadas
+        limit = 1000  # Aumentado para reduzir número de requisições
+        offset = 0
         filters = []
 
-        if last_update and date_column:
-            filters.append((date_column, "gte", last_update.strftime('%Y-%m-%d')))
+        if start_date and date_column:
+            filters.append((date_column, "gte", start_date.strftime('%Y-%m-%d')))
+        if end_date and date_column:
+            filters.append((date_column, "lte", end_date.strftime('%Y-%m-%d')))
 
-        for offset in range(0, limit * max_pages, limit):
+        while True:
             data = fetch_supabase_page(table, offset, limit, filters)
             if not data:
                 break
             all_data.extend(data)
+            offset += limit
+            logger.info(f"Total acumulado: {len(all_data)} registros da tabela {table}")
 
         if not all_data:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
@@ -109,7 +113,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, last_update=N
         logger.error(f"Erro geral: {e}")
         return pd.DataFrame()
 
-def fetch_vendas_data():
+def fetch_vendas_data(start_date=None, end_date=None):
     """Busca dados de vendas."""
     config = SUPABASE_CONFIG["vendas"]
     last_update = st.session_state.get('last_vendas_update', None)
@@ -117,11 +121,12 @@ def fetch_vendas_data():
         table=config["table"],
         columns_expected=config["columns"],
         date_column=config["date_column"],
-        last_update=last_update
+        start_date=start_date,
+        end_date=end_date
     )
     return df
 
-def fetch_estoque_data():
+def fetch_estoque_data(start_date=None, end_date=None):
     """Busca dados de estoque."""
     config = SUPABASE_CONFIG["estoque"]
     last_update = st.session_state.get('last_estoque_update', None)
@@ -129,7 +134,8 @@ def fetch_estoque_data():
         table=config["table"],
         columns_expected=config["columns"],
         date_column=config["date_column"],
-        last_update=last_update
+        start_date=start_date,
+        end_date=end_date
     )
     if not df.empty:
         for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
@@ -156,13 +162,18 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    
-    data_final = datetime.date.today()
+    # Botão para recarregar manualmente
+    if st.button("🔄 Atualizar Dados"):
+        st.cache_data.clear()
+        st.rerun()
+
+    auto_reload()
+
+    data_final = datetime.date.today()  # 15 de maio de 2025, 21:14 -03
     data_inicial = data_final - datetime.timedelta(days=60)
-   
 
     with st.spinner("Carregando dados de vendas..."):
-        vendas_df = fetch_vendas_data()
+        vendas_df = fetch_vendas_data(start_date=data_inicial, end_date=data_final)
 
     if vendas_df.empty:
         st.warning("Não há vendas para o período selecionado.")
@@ -170,7 +181,7 @@ def main():
         vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
 
     with st.spinner("Carregando dados de estoque..."):
-        estoque_df = fetch_estoque_data()
+        estoque_df = fetch_estoque_data(start_date=data_inicial, end_date=data_final)
 
     if estoque_df.empty:
         st.warning("Não há dados de estoque para o período selecionado.")
@@ -217,13 +228,19 @@ def main():
         gb.configure_grid_options(domLayout='normal')
         grid_options = gb.build()
 
+        # Ajustar altura dinamicamente com base no número de linhas
+        row_height = 30  # Altura aproximada de cada linha em pixels
+        min_height = 400  # Altura mínima
+        max_height = 800  # Altura máxima para evitar overflow
+        height = min(max(min_height, len(df) * row_height), max_height)
+
         df_display = df.copy()
         for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
             df_display[col] = df_display[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
         for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']:
             df_display[col] = df_display[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else "")
 
-        AgGrid(df_display, gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, height=400, theme='streamlit')
+        AgGrid(df_display, gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, height=height, theme='streamlit')
 
         if sem_estoque_df.empty:
             st.info("Não há produtos vendidos sem estoque.")
@@ -252,13 +269,16 @@ def main():
             gb.configure_grid_options(domLayout='normal')
             grid_options = gb.build()
 
+            # Ajustar altura dinamicamente para a seção sem estoque
+            height_sem_estoque = min(max(300, len(sem_estoque_df_renomeado) * row_height), 600)
+
             df_sem_estoque_display = sem_estoque_df_renomeado.copy()
             df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
             df_sem_estoque_display['ESTOQUE TOTAL'] = pd.to_numeric(df_sem_estoque_display['ESTOQUE TOTAL'], errors='coerce').fillna(0)
             df_sem_estoque_display['QUANTIDADE VENDIDA'] = df_sem_estoque_display['QUANTIDADE VENDIDA'].apply(lambda x: f"{x:,.0f}")
             df_sem_estoque_display['ESTOQUE TOTAL'] = df_sem_estoque_display['ESTOQUE TOTAL'].apply(lambda x: f"{x:,.0f}")
 
-            AgGrid(df_sem_estoque_display, gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, height=300, theme='streamlit')
+            AgGrid(df_sem_estoque_display, gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, height=height_sem_estoque, theme='streamlit')
 
 if __name__ == "__main__":
     main()
