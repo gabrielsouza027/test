@@ -72,7 +72,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 
     try:
         all_data = []
-        limit = 1000  # Aumentado para reduzir número de requisições
+        limit = 1000
         offset = 0
         filters = []
 
@@ -91,13 +91,13 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 
         if not all_data:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
-            return pd.DataFrame()
+            return pd.DataFrame(columns=columns_expected)
 
         df = pd.DataFrame(all_data)
         missing_columns = [col for col in columns_expected if col not in df.columns]
         if missing_columns:
             logger.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
-            return pd.DataFrame()
+            return pd.DataFrame(columns=columns_expected)
 
         if date_column in df.columns:
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
@@ -112,7 +112,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 
     except Exception as e:
         logger.error(f"Erro ao buscar dados da tabela {table}: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=columns_expected)
 
 def fetch_vendas_data(start_date=None, end_date=None):
     """Busca dados de vendas."""
@@ -152,7 +152,7 @@ def auto_reload():
     if 'last_reload' not in st.session_state:
         st.session_state.last_reload = time.time()
     current_time = time.time()
-    if current_time - st.session_state.last_reload >= 600:  # 10 minutos
+    if current_time - st.session_state.last_reload >= 600:
         st.session_state.last_reload = current_time
         st.cache_data.clear()
         st.rerun()
@@ -163,7 +163,7 @@ def main():
 
     auto_reload()
 
-    data_final = datetime.date.today()  # 15 de maio de 2025, 21:33 -03
+    data_final = datetime.date.today()
     data_inicial = data_final - datetime.timedelta(days=60)
 
     with st.spinner("Carregando dados de vendas..."):
@@ -172,7 +172,7 @@ def main():
     if not vendas_df.empty:
         vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
     else:
-        vendas_grouped = pd.DataFrame(columns=['CODPROD', 'QT'])  # DataFrame vazio com colunas
+        vendas_grouped = pd.DataFrame(columns=['CODPROD', 'QT'])
 
     with st.spinner("Carregando dados de estoque..."):
         estoque_df = fetch_estoque_data(start_date=data_inicial, end_date=data_final)
@@ -181,8 +181,8 @@ def main():
         merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
         sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
     else:
-        estoque_df = pd.DataFrame(columns=SUPABASE_CONFIG["estoque"]["columns"])  # DataFrame vazio com colunas
-        sem_estoque_df = pd.DataFrame(columns=['CODPROD', 'NOME_PRODUTO', 'QT', 'QT_ESTOQUE'])  # DataFrame vazio com colunas
+        estoque_df = pd.DataFrame(columns=SUPABASE_CONFIG["estoque"]["columns"])
+        sem_estoque_df = pd.DataFrame(columns=['CODPROD', 'NOME_PRODUTO', 'QT', 'QT_ESTOQUE'])
 
     # Barra de pesquisa para estoque
     search_query_estoque = st.text_input("Pesquisar no Estoque (Código ou Nome do Produto)", "")
@@ -202,7 +202,6 @@ def main():
         'BLOQUEADA': 'Quantidade Bloqueada'
     })
 
-    # Aplicar filtro de pesquisa para estoque
     if search_query_estoque:
         df = df[
             (df['Código do Produto'].astype(str).str.contains(search_query_estoque, case=False, na=False)) |
@@ -219,6 +218,9 @@ def main():
 
     st.subheader("✅ Estoque")
     st.markdown("Use a paginação para ver mais linhas.")
+    if df.empty:
+        st.markdown("Nenhum dado disponível no estoque para o período selecionado.")
+
     gb = GridOptionsBuilder.from_dataframe(df if not df.empty else pd.DataFrame(columns=df.columns))
     gb.configure_default_column(editable=False, sortable=True, resizable=True, filter=True)
     gb.configure_column(
@@ -233,10 +235,13 @@ def main():
     )
     gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
     gb.configure_grid_options(
-        domLayout='autoHeight',
+        domLayout='normal',
         autoSizeColumns=True
     )
     grid_options = gb.build()
+
+    # Forçar ajuste de largura
+    grid_options['fit_columns_on_grid_load'] = True
 
     df_display = df.copy()
     for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
@@ -266,15 +271,16 @@ def main():
             'CÓDIGO PRODUTO', 'NOME DO PRODUTO', 'QUANTIDADE VENDIDA', 'ESTOQUE TOTAL'
         ]]
 
-        # Barra de pesquisa para produtos sem estoque
         search_query_sem_estoque = st.text_input("Pesquisar em Produtos Sem Estoque (Código ou Nome do Produto)", "")
 
-        # Aplicar filtro de pesquisa para produtos sem estoque
         if search_query_sem_estoque:
             sem_estoque_df_renomeado = sem_estoque_df_renomeado[
                 (sem_estoque_df_renomeado['CÓDIGO PRODUTO'].astype(str).str.contains(search_query_sem_estoque, case=False, na=False)) |
                 (sem_estoque_df_renomeado['NOME DO PRODUTO'].str.contains(search_query_sem_estoque, case=False, na=False))
             ]
+
+        if sem_estoque_df_renomeado.empty:
+            st.markdown("Nenhum produto sem estoque encontrado para o período selecionado.")
 
         gb = GridOptionsBuilder.from_dataframe(sem_estoque_df_renomeado if not sem_estoque_df_renomeado.empty else pd.DataFrame(columns=sem_estoque_df_renomeado.columns))
         gb.configure_default_column(editable=False, sortable=True, resizable=True, filter=True)
@@ -290,10 +296,12 @@ def main():
         )
         gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
         gb.configure_grid_options(
-            domLayout='autoHeight',
+            domLayout='normal',
             autoSizeColumns=True
         )
         grid_options = gb.build()
+
+        grid_options['fit_columns_on_grid_load'] = True
 
         df_sem_estoque_display = sem_estoque_df_renomeado.copy()
         df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
