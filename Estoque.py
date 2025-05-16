@@ -169,7 +169,7 @@ def main():
 
     auto_reload()
 
-    data_final = datetime.date.today()  # 15 de maio de 2025, 21:14 -03
+    data_final = datetime.date.today()  # 15 de maio de 2025, 21:17 -03
     data_inicial = data_final - datetime.timedelta(days=60)
 
     with st.spinner("Carregando dados de vendas..."):
@@ -189,7 +189,9 @@ def main():
         merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
         sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
 
-        pesquisar = st.text_input("Pesquisar por Código do Produto ou Nome", "")
+        # Filtro múltiplo para códigos de produto
+        unique_products = estoque_df['CODPROD'].unique().tolist()
+        selected_products = st.multiselect("Selecione os Códigos de Produto", unique_products, default=unique_products[:5])
 
         df = estoque_df.copy()
         df = df.rename(columns={
@@ -206,11 +208,9 @@ def main():
             'BLOQUEADA': 'Quantidade Bloqueada'
         })
 
-        if pesquisar:
-            df = df[
-                (df['Código do Produto'].astype(str).str.contains(pesquisar, case=False, na=False)) |
-                (df['Nome do Produto'].str.contains(pesquisar, case=False, na=False))
-            ]
+        # Aplicar filtro múltiplo
+        if selected_products:
+            df = df[df['Código do Produto'].isin(selected_products)]
 
         df['Quantidade Total'] = df[['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada']].fillna(0).sum(axis=1)
 
@@ -221,18 +221,15 @@ def main():
         ])
 
         st.subheader("✅ Estoque")
-        st.markdown("Use a barra de rolagem para ver mais linhas.")
+        st.markdown("Use a paginação para ver mais linhas.")
         gb = GridOptionsBuilder.from_dataframe(df)
         gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=False)
-        gb.configure_pagination(enabled=False)
+        gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=5)  # 5 linhas por página
         gb.configure_grid_options(domLayout='normal')
         grid_options = gb.build()
 
-        # Ajustar altura dinamicamente com base no número de linhas
-        row_height = 30  # Altura aproximada de cada linha em pixels
-        min_height = 400  # Altura mínima
-        max_height = 800  # Altura máxima para evitar overflow
-        height = min(max(min_height, len(df) * row_height), max_height)
+        # Altura fixa com paginação
+        height = 400  # Altura máxima fixa
 
         df_display = df.copy()
         for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
@@ -264,13 +261,21 @@ def main():
                 'CÓDIGO PRODUTO', 'NOME DO PRODUTO', 'QUANTIDADE VENDIDA', 'ESTOQUE TOTAL'
             ]]
 
+            # Filtro múltiplo para produtos sem estoque
+            unique_products_sem_estoque = sem_estoque_df_renomeado['CÓDIGO PRODUTO'].unique().tolist()
+            selected_products_sem_estoque = st.multiselect("Selecione os Códigos de Produto Sem Estoque", unique_products_sem_estoque, default=unique_products_sem_estoque[:5])
+
+            if selected_products_sem_estoque:
+                sem_estoque_df_renomeado = sem_estoque_df_renomeado[sem_estoque_df_renomeado['CÓDIGO PRODUTO'].isin(selected_products_sem_estoque)]
+
             gb = GridOptionsBuilder.from_dataframe(sem_estoque_df_renomeado)
             gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=False)
+            gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=5)  # 5 linhas por página
             gb.configure_grid_options(domLayout='normal')
             grid_options = gb.build()
 
-            # Ajustar altura dinamicamente para a seção sem estoque
-            height_sem_estoque = min(max(300, len(sem_estoque_df_renomeado) * row_height), 600)
+            # Altura fixa com paginação
+            height_sem_estoque = 300  # Altura máxima fixa
 
             df_sem_estoque_display = sem_estoque_df_renomeado.copy()
             df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
