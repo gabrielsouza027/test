@@ -156,8 +156,9 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    data_inicial = data_final - datetime.timedelta(days=370)
+    
     data_final = datetime.date.today()
+    data_inicial = data_final - datetime.timedelta(days=370)
    
 
     with st.spinner("Carregando dados de vendas..."):
