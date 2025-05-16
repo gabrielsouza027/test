@@ -178,7 +178,6 @@ def carregar_dados(_last_fetched=None):
         # Garantir tipos de dados
         combined_df = combined_df.with_columns([
             pl.col('PVENDA').cast(pl.Float32, strict=False).fill_null(0),
-            pl.col('QT').cast(pl.Float64).round(0).cast(pl.Int32, strict=False).fill_null(0)
             pl.col('CODFILIAL').cast(pl.Utf8),
             pl.col('NUMPED').cast(pl.Utf8),
             pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False)
