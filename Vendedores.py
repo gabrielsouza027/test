@@ -592,4 +592,4 @@ def main():
                         logger.warning(f"Nenhum dado encontrado para {tipo_filtro}: {', '.join(itens_selecionados)} e vendedor {vendedor}")
 
 if __name__ == "__main__":
-    main()
+
