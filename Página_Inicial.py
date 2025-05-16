@@ -44,7 +44,7 @@ def get_headers():
         st.stop()
 
 # Função para carregar dados de uma única tabela com suporte a filtros de data
-def fetch_table_data(table, page_size=150022 , last_fetched=None):
+def fetch_table_data(table, page_size=40000 , last_fetched=None):
     table_name = table["table_name"]
     url = table["url"]
     if last_fetched:
