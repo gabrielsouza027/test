@@ -268,12 +268,7 @@ def carregar_dados():
             url=st.secrets["SUPABASE_URL"],
             key=st.secrets["SUPABASE_KEY"]
         )
-        # Sincronizar dados (carrega do cache e busca novos dados)
-        data = supabase.sync_data()
-        if data.is_empty():
-            logger.warning("Nenhum dado disponível após sincronização")
-            st.error("Nenhum dado disponível. Verifique a conexão com o Supabase.")
-            return pl.DataFrame()
+
 
         # Filtrar apenas filiais 1 e 2
         data = data.filter(pl.col('CODFILIAL').is_in(['1', '2']))
