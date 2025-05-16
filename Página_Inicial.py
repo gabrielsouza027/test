@@ -7,251 +7,272 @@ import locale
 import plotly.express as px
 import logging
 from concurrent.futures import ThreadPoolExecutor
-import os
-import pickle
+import json
 
 # Configurar logging
+
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(**name**)
 
 # Definir o local para a formatação monetária
+
 try:
-    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+locale.setlocale(locale.LC\_ALL, 'pt\_BR.UTF-8')
 except locale.Error:
-    logger.warning("Locale 'pt_BR.UTF-8' não disponível, usando padrão.")
-    locale.setlocale(locale.LC_ALL, '')
+logger.warning("Locale 'pt\_BR.UTF-8' não disponível, usando padrão.")
+locale.setlocale(locale.LC\_ALL, '')
 
 # Configuração das URLs e tabelas do Supabase
-SUPABASE_TABLES = [
-    {
-        "table_name": "PCPEDC",
-        "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
-    },
+
+SUPABASE\_TABLES = \[
+{
+"table\_name": "PCPEDC",
+"url": f"{st.secrets\['SUPABASE\_URL']}/rest/v1/PCPEDC?select=*"
+},
+\# Adicione mais tabelas aqui, se necessário
+\# {
+\#     "table\_name": "VWSOMELIER",
+\#     "url": f"{st.secrets\['SUPABASE\_URL']}/rest/v1/VWSOMELIER?select=*"
+\# },
 ]
 
 # Cabeçalhos comuns para todas as requisições
-def get_headers():
-    try:
-        return {
-            "apikey": st.secrets["SUPABASE_KEY"],
-            "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
-            "Accept": "application/json"
-        }
-    except KeyError as e:
-        st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
-        st.stop()
 
-# Função para carregar dados de uma única tabela com suporte a filtros de data
-def fetch_table_data(table, page_size=150023, last_fetched=None):
-    table_name = table["table_name"]
-    url = table["url"]
-    if last_fetched:
-        url += f"&DATA_PEDIDO=gt.{last_fetched.strftime('%Y-%m-%dT%H:%M:%S')}"
-    logger.info(f"Carregando dados da tabela {table_name} com URL: {url}")
+def get\_headers():
+try:
+return {
+"apikey": st.secrets\["SUPABASE\_KEY"],
+"Authorization": f"Bearer {st.secrets\['SUPABASE\_KEY']}",
+"Accept": "application/json"
+}
+except KeyError as e:
+st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
+st.stop()
+
+# Função para carregar dados de uma única tabela
+
+def fetch\_table\_data(table, page\_size=1000):
+table\_name = table\["table\_name"]
+url = table\["url"]
+logger.info(f"Carregando dados da tabela {table\_name}")
+all\_data = \[]
+
+```
+offset = 0
+while True:
+    headers = get_headers()
+    headers["Range"] = f"{offset}-{offset + page_size - 1}"
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
+            break
+        all_data.extend(data)
+        offset += page_size
+        logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
+        return []
+
+return all_data
+```
+
+# Função para carregar dados do Supabase com cache, paralelismo e Polars
+
+@st.cache\_data(show\_spinner=False, ttl=900)
+def carregar\_dados():
+try:
+\# Carregar dados em paralelo usando ThreadPoolExecutor
+with ThreadPoolExecutor() as executor:
+results = list(executor.map(fetch\_table\_data, SUPABASE\_TABLES))
+
+```
+    # Combinar todos os dados
     all_data = []
+    for result in results:
+        all_data.extend(result)
 
-    offset = 0
-    while True:
-        headers = get_headers()
-        headers["Range"] = f"{offset}-{offset + page_size - 1}"
-        
-        try:
-            response = requests.get(url, headers=headers, timeout=60)
-            response.raise_for_status()
-            data = response.json()
-            if not data:
-                logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
-                break
-            all_data.extend(data)
-            offset += page_size
-            logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-            return []
-
-    return all_data
-
-# Função para salvar e carregar cache em arquivo
-def save_cache(data, filename="cache.pkl"):
-    try:
-        with open(filename, "wb") as f:
-            pickle.dump(data, f)
-        logger.info(f"Cache salvo em {filename}")
-    except Exception as e:
-        logger.warning(f"Erro ao salvar cache: {e}")
-
-def load_cache(filename="cache.pkl"):
-    try:
-        if os.path.exists(filename):
-            with open(filename, "rb") as f:
-                data = pickle.load(f)
-            logger.info(f"Cache carregado de {filename}")
-            return data
-        else:
-            logger.info("Nenhum cache encontrado")
-            return None
-    except Exception as e:
-        logger.warning(f"Erro ao carregar cache: {e}")
-        return None
-
-# Função para carregar dados do Supabase com cache e paralelismo
-@st.cache_data(show_spinner=False, ttl=900)
-def carregar_dados(_last_fetched=None):
-    try:
-        # Carregar cache existente
-        cached_data = load_cache()
-        cached_df = pl.DataFrame(cached_data) if cached_data else pl.DataFrame()
-        logger.info(f"Colunas no cache: {cached_df.columns} (total: {len(cached_df.columns)}), tipos: {dict(cached_df.schema)}")
-
-        # Carregar dados novos em paralelo usando ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(lambda table: fetch_table_data(table, last_fetched=_last_fetched), SUPABASE_TABLES))
-
-        # Combinar todos os dados novos
-        all_data = []
-        for result in results:
-            all_data.extend(result)
-
-        if not all_data and cached_data is None:
-            logger.warning("Nenhum dado retornado pela API e nenhum cache disponível")
-            st.error("Nenhum dado retornado pela API.")
-            return pl.DataFrame()
-
-        # Converter novos dados para Polars DataFrame
-        new_df = pl.DataFrame(all_data) if all_data else pl.DataFrame()
-        logger.info(f"Colunas nos novos dados: {new_df.columns} (total: {len(new_df.columns)}), tipos: {dict(new_df.schema)}")
-
-        # Definir o schema esperado
-        expected_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED', 'VLTOTAL']
-
-        # Alinhar schemas
-        if not new_df.is_empty():
-            for col in expected_columns:
-                if col not in new_df.columns:
-                    new_df = new_df.with_columns(pl.lit(None).alias(col))
-            new_df = new_df.with_columns([
-                pl.col('PVENDA').cast(pl.Float64).fill_null(0),
-                pl.col('QT').cast(pl.Float64).fill_null(0),
-                (pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0)
-            ])
-
-        if not cached_df.is_empty():
-            for col in expected_columns:
-                if col not in cached_df.columns:
-                    cached_df = cached_df.with_columns(pl.lit(None).alias(col))
-            cached_df = cached_df.with_columns([
-                pl.col('PVENDA').cast(pl.Float64).fill_null(0),
-                pl.col('QT').cast(pl.Float64).fill_null(0),
-                (pl.col('PVENDA').fill_null(0) * pl.col('QT').fill_null(0)).alias('VLTOTAL').fill_null(0)
-            ])
-
-        # Forçar o mesmo conjunto de colunas em ambos os DataFrames
-        if not cached_df.is_empty() and not new_df.is_empty():
-            common_columns = list(set(cached_df.columns) & set(new_df.columns))
-            logger.info(f"Colunas comuns: {common_columns}")
-            cached_df = cached_df.select(common_columns)
-            new_df = new_df.select(common_columns)
-        elif not cached_df.is_empty():
-            new_df = cached_df.clone().clear()
-        elif not new_df.is_empty():
-            cached_df = new_df.clone().clear()
-
-        # Combinar dados
-        combined_df = pl.concat([cached_df, new_df]).unique(subset=["NUMPED"])
-        logger.info(f"Colunas após concatenação: {combined_df.columns} (total: {len(combined_df.columns)}), tipos: {dict(combined_df.schema)}")
-
-        # Verificar se as colunas necessárias existem
-        required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
-        missing_columns = [col for col in required_columns if col not in combined_df.columns]
-        if missing_columns:
-            logger.error(f"Colunas ausentes nos dados: {missing_columns}")
-            st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
-            return pl.DataFrame()
-
-        # Processar DATA_PEDIDO com múltiplos formatos
-        if not combined_df['DATA_PEDIDO'].is_empty():
-            # Log alguns valores para debug
-            sample_dates = combined_df['DATA_PEDIDO'].head(5).to_list()
-            logger.info(f"Amostra de DATA_PEDIDO: {sample_dates}")
-            combined_df = combined_df.with_columns([
-                pl.col('PVENDA').cast(pl.Float64).fill_null(0),
-                pl.col('QT').cast(pl.Float64).fill_null(0),
-                pl.col('CODFILIAL').cast(pl.Utf8),
-                pl.col('NUMPED').cast(pl.Utf8),
-                pl.when(pl.col('DATA_PEDIDO').str.lengths() > 0)
-                .then(pl.col('DATA_PEDIDO').str.to_datetime(
-                    [ "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d" ],
-                    strict=False
-                ))
-                .otherwise(None).alias('DATA_PEDIDO')
-            ])
-
-        # Recalcular VLTOTAL para consistência
-        combined_df = combined_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL').fill_null(0))
-
-        # Filtrar apenas filiais 1 e 2
-        combined_df = combined_df.filter(pl.col('CODFILIAL').is_in(['1', '2']))
-
-        # Remover registros com DATA_PEDIDO nula
-        if combined_df['DATA_PEDIDO'].is_null().any():
-            logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
-            st.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'. Filtrando registros inválidos.")
-            combined_df = combined_df.filter(pl.col('DATA_PEDIDO').is_not_null())
-
-        # Salvar cache atualizado
-        if not combined_df.is_empty():
-            save_cache(combined_df.to_dicts())
-
-        logger.info(f"Dados carregados com sucesso: {len(combined_df)} registros")
-        return combined_df
-
-    except Exception as e:
-        logger.error(f"Erro geral ao processar dados: {e}")
-        st.error(f"Erro ao processar dados: {e}")
+    if not all_data:
+        logger.warning("Nenhum dado retornado pela API")
+        st.error("Nenhum dado retornado pela API.")
         return pl.DataFrame()
 
+    # Converter para Polars DataFrame
+    data = pl.DataFrame(all_data)
+
+    # Verificar se as colunas necessárias existem
+    required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
+    missing_columns = [col for col in required_columns if col not in data.columns]
+    if missing_columns:
+        logger.error(f"Colunas ausentes nos dados: {missing_columns}")
+        st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
+        return pl.DataFrame()
+
+    # Garantir tipos de dados
+    data = data.with_columns([
+        pl.col('PVENDA').cast(pl.Float32, strict=False).fill_null(0),
+        pl.col('QT').cast(pl.Int32, strict=False).fill_null(0),
+        pl.col('CODFILIAL').cast(pl.Utf8),
+        pl.col('NUMPED').cast(pl.Utf8),
+        pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False)
+    ])
+
+    # Calcular VLTOTAL como PVENDA * QT
+    data = data.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL'))
+
+    # Filtrar apenas filiais 1 e 2
+    data = data.filter(pl.col('CODFILIAL').is_in(['1', '2']))
+
+    # Remover registros com DATA_PEDIDO nula
+    if data['DATA_PEDIDO'].is_null().any():
+        logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
+        st.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'. Filtrando registros inválidos.")
+        data = data.filter(pl.col('DATA_PEDIDO').is_not_null())
+
+    logger.info(f"Dados carregados com sucesso: {len(data)} registros")
+    return data
+
+except Exception as e:
+    logger.error(f"Erro geral ao processar dados: {e}")
+    st.error(f"Erro ao processar dados: {e}")
+    return pl.DataFrame()
+```
+
 # Funções de cálculo ajustadas para Polars
-def calcular_faturamento(data, hoje, ontem, semana_inicial, semana_passada_inicial):
-    faturamento_hoje = data.filter(pl.col('DATA_PEDIDO') == hoje)['VLTOTAL'].sum()
-    faturamento_ontem = data.filter(pl.col('DATA_PEDIDO') == ontem)['VLTOTAL'].sum()
-    faturamento_semanal_atual = data.filter((pl.col('DATA_PEDIDO') >= semana_inicial) & (pl.col('DATA_PEDIDO') <= hoje))['VLTOTAL'].sum()
-    faturamento_semanal_passada = data.filter((pl.col('DATA_PEDIDO') >= semana_passada_inicial) & (pl.col('DATA_PEDIDO') < semana_inicial))['VLTOTAL'].sum()
-    return faturamento_hoje, faturamento_ontem, faturamento_semanal_atual, faturamento_semanal_passada
 
-def calcular_quantidade_pedidos(data, hoje, ontem, semana_inicial, semana_passada_inicial):
-    pedidos_hoje = data.filter(pl.col('DATA_PEDIDO') == hoje)['NUMPED'].n_unique()
-    pedidos_ontem = data.filter(pl.col('DATA_PEDIDO') == ontem)['NUMPED'].n_unique()
-    pedidos_semanal_atual = data.filter((pl.col('DATA_PEDIDO') >= semana_inicial) & (pl.col('DATA_PEDIDO') <= hoje))['NUMPED'].n_unique()
-    pedidos_semanal_passada = data.filter((pl.col('DATA_PEDIDO') >= semana_passada_inicial) & (pl.col('DATA_PEDIDO') < semana_inicial))['NUMPED'].n_unique()
-    return pedidos_hoje, pedidos_ontem, pedidos_semanal_atual, pedidos_semanal_passada
+def calcular\_faturamento(data, hoje, ontem, semana\_inicial, semana\_passada\_inicial):
+faturamento\_hoje = data.filter(pl.col('DATA\_PEDIDO') == hoje)\['VLTOTAL'].sum()
+faturamento\_ontem = data.filter(pl.col('DATA\_PEDIDO') == ontem)\['VLTOTAL'].sum()
+faturamento\_semanal\_atual = data.filter((pl.col('DATA\_PEDIDO') >= semana\_inicial) & (pl.col('DATA\_PEDIDO') <= hoje))\['VLTOTAL'].sum()
+faturamento\_semanal\_passada = data.filter((pl.col('DATA\_PEDIDO') >= semana\_passada\_inicial) & (pl.col('DATA\_PEDIDO') < semana\_inicial))\['VLTOTAL'].sum()
+return faturamento\_hoje, faturamento\_ontem, faturamento\_semanal\_atual, faturamento\_semanal\_passada
 
-def calcular_comparativos(data, hoje, mes_atual, ano_atual):
-    mes_anterior = mes_atual - 1 if mes_atual > 1 else 12
-    ano_anterior = ano_atual if mes_atual > 1 else ano_atual - 1
-    faturamento_mes_atual = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_atual) & (pl.col('DATA_PEDIDO').dt.year() == ano_atual))['VLTOTAL'].sum()
-    pedidos_mes_atual = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_atual) & (pl.col('DATA_PEDIDO').dt.year() == ano_atual))['NUMPED'].n_unique()
-    faturamento_mes_anterior = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_anterior) & (pl.col('DATA_PEDIDO').dt.year() == ano_anterior))['VLTOTAL'].sum()
-    pedidos_mes_anterior = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_anterior) & (pl.col('DATA_PEDIDO').dt.year() == ano_anterior))['NUMPED'].n_unique()
-    return faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior
+def calcular\_quantidade\_pedidos(data, hoje, ontem, semana\_inicial, semana\_passada\_inicial):
+pedidos\_hoje = data.filter(pl.col('DATA\_PEDIDO') == hoje)\['NUMPED'].n\_unique()
+pedidos\_ontem = data.filter(pl.col('DATA\_PEDIDO') == ontem)\['NUMPED'].n\_unique()
+pedidos\_semanal\_atual = data.filter((pl.col('DATA\_PEDIDO') >= semana\_inicial) & (pl.col('DATA\_PEDIDO') <= hoje))\['NUMPED'].n\_unique()
+pedidos\_semanal\_passada = data.filter((pl.col('DATA\_PEDIDO') >= semana\_passada\_inicial) & (pl.col('DATA\_PEDIDO') < semana\_inicial))\['NUMPED'].n\_unique()
+return pedidos\_hoje, pedidos\_ontem, pedidos\_semanal\_atual, pedidos\_semanal\_passada
 
-def calcular_variacao(atual, anterior):
-    if anterior == 0:
-        return 0
-    return ((atual - anterior) / anterior) * 100
+def calcular\_comparativos(data, hoje, mes\_atual, ano\_atual):
+mes\_anterior = mes\_atual - 1 if mes\_atual > 1 else 12
+ano\_anterior = ano\_atual if mes\_atual > 1 else ano\_atual - 1
+faturamento\_mes\_atual = data.filter((pl.col('DATA\_PEDIDO').dt.month() == mes\_atual) & (pl.col('DATA\_PEDIDO').dt.year() == ano\_atual))\['VLTOTAL'].sum()
+pedidos\_mes\_atual = data.filter((pl.col('DATA\_PEDIDO').dt.month() == mes\_atual) & (pl.col('DATA\_PEDIDO').dt.year() == ano\_atual))\['NUMPED'].n\_unique()
+faturamento\_mes\_anterior = data.filter((pl.col('DATA\_PEDIDO').dt.month() == mes\_anterior) & (pl.col('DATA\_PEDIDO').dt.year() == ano\_anterior))\['VLTOTAL'].sum()
+pedidos\_mes\_anterior = data.filter((pl.col('DATA\_PEDIDO').dt.month() == mes\_anterior) & (pl.col('DATA\_PEDIDO').dt.year() == ano\_anterior))\['NUMPED'].n\_unique()
+return faturamento\_mes\_atual, faturamento\_mes\_anterior, pedidos\_mes\_atual, pedidos\_mes\_anterior
 
-def icone_variacao(valor):
-    if valor > 0:
-        return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
-    elif valor < 0:
-        return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
-    else:
-        return f"{valor:.2f}%"
+def calcular\_variacao(atual, anterior):
+if anterior == 0:
+return 0
+return ((atual - anterior) / anterior) \* 100
 
-def formatar_valor(valor):
-    try:
-        return locale.currency(valor, grouping=True, symbol=True)
-    except Exception:
-        return f"R$ {valor:,.2f}"
+def icone\_variacao(valor):
+if valor > 0:
+return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
+elif valor < 0:
+return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
+else:
+return f"{valor:.2f}%"
+
+def formatar\_valor(valor):
+try:
+return locale.currency(valor, grouping=True, symbol=True)
+except Exception:
+return f"R\$ {valor:,.2f}"
+
+def main():
+st.markdown(""" <style>
+.st-emotion-cache-1ibsh2c {
+width: 100%;
+padding: 0rem 1rem 0rem;
+max-width: initial;
+min-width: auto;
+}
+.st-column {
+display: flex;
+justify-content: center;
+align-items: center;
+}
+.card-container {
+display: flex;
+align-items: center;
+background-color: #302d2d;
+padding: 10px;
+border-radius: 8px;
+margin-bottom: 10px;
+color: white;
+flex-direction: column;
+text-align: center;
+}
+.card-container img {
+width: 51px;
+height: 54px;
+margin-bottom: 5px;
+}
+.number {
+font-size: 20px;
+font-weight: bold;
+margin-top: 5px;
+} </style>
+""", unsafe\_allow\_html=True)
+
+```
+st.title('Dashboard de Faturamento')
+st.markdown("### Resumo de Vendas")
+
+# Carregar dados com cache
+with st.spinner("Carregando dados do Supabase..."):
+    data = carregar_dados()
+
+if data.is_empty():
+    st.error("Não foi possível carregar os dados. Verifique as configurações da API ou tente novamente.")
+    return
+
+col1, col2 = st.columns(2)
+with col1:
+    filial_1 = st.checkbox("Filial 1", value=True)
+with col2:
+    filial_2 = st.checkbox("Filial 2", value=True)
+
+# Definir filiais selecionadas
+filiais_selecionadas = []
+if filial_1:
+    filiais_selecionadas.append('1')
+if filial_2:
+    filiais_selecionadas.append('2')
+
+# Verificar se pelo menos uma filial está selecionada
+if not filiais_selecionadas:
+    st.warning("Por favor, selecione pelo menos uma filial para exibir os dados.")
+    return
+
+# Filtrar dados com base nas filiais selecionadas
+data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
+
+today = datetime.today()  # Obter a data atual com hora
+hoje = pd.to_datetime(today).normalize()  # Normalizar para meia-noite
+ontem = hoje - timedelta(days=1)
+semana_inicial = hoje - timedelta(days=hoje.weekday())
+semana_passada_inicial = semana_inicial - timedelta(days=7)
+
+faturamento_hoje, faturamento_ontem, faturamento_semanal_atual, faturamento_semanal_passada = calcular_faturamento(data_filtrada, hoje, ontem, semana_inicial, semana_passada_inicial)
+pedidos_hoje, pedidos_ontem, pedidos_semanal_atual, pedidos_semanal_passada = calcular_quantidade_pedidos(data_filtrada, hoje, ontem, semana_inicial, semana_passada_inicial)
+
+mes_atual = hoje.month
+ano_atual = hoje.year
+faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior = calcular_comparativos(data_filtrada, hoje, mes_atual, ano_atual)
+
+# Calcular variações
+var_faturamento_mes = calcular_variacao(faturamento_mes_atual, faturamento_mes_anterior)
+var_pedidos_mes = calcular_variacao(pedidos_mes_atual, pedidos_mes_anterior)
+var_faturamento_hoje = calcular_variacao(faturamento_hoje, faturamento_ontem)
+var_pedidos_hoje = calcular_variacao(pedidos_hoje, pedidos_ontem)
+var_faturamento_semananterior = calcular_variacao(faturamento_semanal_atual, faturamento_semanal_passada)
 
 def grafico_pizza_variacao(labels, valores, titulo):
     fig = px.pie(
@@ -265,265 +286,186 @@ def grafico_pizza_variacao(labels, valores, titulo):
     fig.update_layout(margin=dict(t=30, b=30, l=30, r=30))
     return fig
 
-def main():
-    st.markdown("""
-        <style>
-        .st-emotion-cache-1ibsh2c {
-            width: 100%;
-            padding: 0rem 1rem 0rem;
-            max-width: initial;
-            min-width: auto;
-        }
-        .st-column {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        .card-container {
-            display: flex;
-            align-items: center;
-            background-color: #302d2d;
-            padding: 10px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            color: white;
-            flex-direction: column;
-            text-align: center;
-        }
-        .card-container img {
-            width: 51px;
-            height: 54px;
-            margin-bottom: 5px;
-        }
-        .number {
-            font-size: 20px;
-            font-weight: bold;
-            margin-top: 5px;
-        }
-        </style>
+# Definir colunas para exibição
+col1, col2, col3, col4, col5 = st.columns(5)
+
+with col1:
+    st.markdown(f"""
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/2460/2460494.png" alt="Ícone Hoje">
+            <span>Hoje:</span> 
+            <div class="number">{formatar_valor(faturamento_hoje)}</div>
+            <small>Variação: {icone_variacao(var_faturamento_hoje)}</small>
+        </div>
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/3703/3703896.png" alt="Ícone Ontem">
+            <span>Ontem:</span> 
+            <div class="number">{formatar_valor(faturamento_ontem)}</div>
+        </div>
     """, unsafe_allow_html=True)
 
-    st.title('Dashboard de Faturamento')
-    st.markdown("### Resumo de Vendas")
+with col2:
+    st.markdown(f"""
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/4435/4435153.png" alt="Ícone Semana Atual">
+            <span>Semana Atual:</span> 
+            <div class="number">{formatar_valor(faturamento_semanal_atual)}</div>
+            <small>Variação: {icone_variacao(var_faturamento_semananterior)}</small>
+        </div>
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/4435/4435153.png" alt="Ícone Semana Passada">
+            <span>Semana Passada:</span> 
+            <div class="number">{formatar_valor(faturamento_semanal_passada)}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-    # Inicializar session state para last_fetched
-    if 'last_fetched' not in st.session_state:
-        st.session_state.last_fetched = None
+with col3:
+    st.markdown(f"""
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/10535/10535844.png" alt="Ícone Mês Atual">
+            <span>Mês Atual:</span> 
+            <div class="number">{formatar_valor(faturamento_mes_atual)}</div>
+            <small>Variação: {icone_variacao(var_faturamento_mes)}</small>
+        </div>
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/584/584052.png" alt="Ícone Mês Anterior">
+            <span>Mês Anterior:</span> 
+            <div class="number">{formatar_valor(faturamento_mes_anterior)}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-    # Carregar dados com cache
-    with st.spinner("Carregando dados do Supabase..."):
-        data = carregar_dados(_last_fetched=st.session_state.last_fetched)
-        if not data.is_empty():
-            st.session_state.last_fetched = data['DATA_PEDIDO'].max()
+with col4:
+    st.markdown(f"""
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/6632/6632848.png" alt="Ícone Pedidos Mês Atual">
+            <span>Pedidos Mês Atual:</span> 
+            <div class="number">{pedidos_mes_atual}</div>
+            <small>Variação: {icone_variacao(var_pedidos_mes)}</small>
+        </div>
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/925/925049.png" alt="Ícone Pedidos Mês Anterior">
+            <span>Pedidos Mês Anterior:</span> 
+            <div class="number">{pedidos_mes_anterior}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-    if data.is_empty():
-        st.error("Não foi possível carregar os dados. Verifique as configurações da API ou tente novamente.")
-        return
+with col5:
+    st.markdown(f"""
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/14018/14018701.png" alt="Ícone Pedidos Hoje">
+            <span>Pedidos Hoje:</span> 
+            <div class="number">{pedidos_hoje}</div>
+            <small>Variação: {icone_variacao(var_pedidos_hoje)}</small>
+        </div>
+        <div class="card-container">
+            <img src="https://cdn-icons-png.flaticon.com/512/5220/5220625.png" alt="Ícone Pedidos Ontem">
+            <span>Pedidos Ontem:</span> 
+            <div class="number">{pedidos_ontem}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        filial_1 = st.checkbox("Filial 1", value=True)
-    with col2:
-        filial_2 = st.checkbox("Filial 2", value=True)
+st.markdown("---")
 
-    # Definir filiais selecionadas
-    filiais_selecionadas = []
-    if filial_1:
-        filiais_selecionadas.append('1')
-    if filial_2:
-        filiais_selecionadas.append('2')
+col1, col2, col3, col4, col5 = st.columns(5)
+with col1:
+    st.plotly_chart(grafico_pizza_variacao(["Hoje", "Ontem"], [abs(faturamento_hoje), abs(faturamento_ontem)], "Variação de Faturamento (Hoje x Ontem)"), use_container_width=True)
+with col2:
+    st.plotly_chart(grafico_pizza_variacao(["Semana Atual", "Semana Passada"], [abs(faturamento_semanal_atual), abs(faturamento_semanal_passada)], "Variação de Faturamento (Semana)"), use_container_width=True)
+with col3:
+    st.plotly_chart(grafico_pizza_variacao(["Mês Atual", "Mês Anterior"], [abs(faturamento_mes_atual), abs(faturamento_mes_anterior)], "Variação de Faturamento (Mês)"), use_container_width=True)
+with col4:
+    st.plotly_chart(grafico_pizza_variacao(["Pedidos Mês Atual", "Pedidos Mês Passado"], [abs(pedidos_mes_atual), abs(pedidos_mes_anterior)], "Variação de Pedidos (Mês)"), use_container_width=True)
+with col5:
+    st.plotly_chart(grafico_pizza_variacao(["Pedidos Hoje", "Pedidos Ontem"], [abs(pedidos_hoje), abs(pedidos_ontem)], "Variação de Pedidos (Hoje x Ontem)"), use_container_width=True)
 
-    if not filiais_selecionadas:
-        st.warning("Por favor, selecione pelo menos uma filial para exibir os dados.")
-        return
+# Gráfico de linhas com seletores de data
+st.markdown("---")
+st.subheader("Comparação de Vendas por Mês e Ano")
 
-    # Filtrar dados com base nas filiais selecionadas
-    data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
+# Seletores de data
+col_data1, col_data2 = st.columns(2)
+with col_data1:
+    default_inicial = data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else pd.to_datetime('2024-01-01')
+    data_inicial = st.date_input("Data Inicial", value=default_inicial, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.is_empty() else None)
+with col_data2:
+    data_final = st.date_input("Data Final", value=hoje, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.is_empty() else None)
 
-    today = datetime.today()
-    hoje = pd.to_datetime(today).normalize()
-    ontem = hoje - timedelta(days=1)
-    semana_inicial = hoje - timedelta(days=hoje.weekday())
-    semana_passada_inicial = semana_inicial - timedelta(days=7)
+if data_inicial > data_final:
+    st.error("A Data Inicial não pode ser maior que a Data Final.")
+    return
 
-    faturamento_hoje, faturamento_ontem, faturamento_semanal_atual, faturamento_semanal_passada = calcular_faturamento(data_filtrada, hoje, ontem, semana_inicial, semana_passada_inicial)
-    pedidos_hoje, pedidos_ontem, pedidos_semanal_atual, pedidos_semanal_passada = calcular_quantidade_pedidos(data_filtrada, hoje, ontem, semana_inicial, semana_passada_inicial)
+# Filtrar dados pelo período selecionado
+df_periodo = data_filtrada.filter((pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) & 
+                                 (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final)))
 
-    mes_atual = hoje.month
-    ano_atual = hoje.year
-    faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior = calcular_comparativos(data_filtrada, hoje, mes_atual, ano_atual)
+if df_periodo.is_empty():
+    st.warning("Nenhum dado disponível para o período selecionado.")
+    return
 
-    # Calcular variações
-    var_faturamento_mes = calcular_variacao(faturamento_mes_atual, faturamento_mes_anterior)
-    var_pedidos_mes = calcular_variacao(pedidos_mes_atual, pedidos_mes_anterior)
-    var_faturamento_hoje = calcular_variacao(faturamento_hoje, faturamento_ontem)
-    var_pedidos_hoje = calcular_variacao(pedidos_hoje, pedidos_ontem)
-    var_faturamento_semananterior = calcular_variacao(faturamento_semanal_atual, faturamento_semanal_passada)
+# Adicionar colunas de ano e mês
+df_periodo = df_periodo.with_columns([
+    pl.col('DATA_PEDIDO').dt.year().cast(pl.Utf8).alias('Ano'),
+    pl.col('DATA_PEDIDO').dt.month().alias('Mês')
+])
 
-    # Definir colunas para exibição
-    col1, col2, col3, col4, col5 = st.columns(5)
+# Agrupar por ano e mês
+vendas_por_mes_ano = df_periodo.group_by(['Ano', 'Mês']).agg(
+    Valor_Total_Vendido=pl.col('VLTOTAL').sum()
+).sort(['Ano', 'Mês'])
 
-    with col1:
-        st.markdown(f"""
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/2460/2460494.png" alt="Ícone Hoje">
-                <span>Hoje:</span> 
-                <div class="number">{formatar_valor(faturamento_hoje)}</div>
-                <small>Variação: {icone_variacao(var_faturamento_hoje)}</small>
-            </div>
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/3703/3703896.png" alt="Ícone Ontem">
-                <span>Ontem:</span> 
-                <div class="number">{formatar_valor(faturamento_ontem)}</div>
-            </div>
-        """, unsafe_allow_html=True)
+# Converter para Pandas para compatibilidade com Plotly
+vendas_por_mes_ano_pandas = vendas_por_mes_ano.to_pandas()
 
-    with col2:
-        st.markdown(f"""
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/4435/4435153.png" alt="Ícone Semana Atual">
-                <span>Semana Atual:</span> 
-                <div class="number">{formatar_valor(faturamento_semanal_atual)}</div>
-                <small>Variação: {icone_variacao(var_faturamento_semananterior)}</small>
-            </div>
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/4435/4435153.png" alt="Ícone Semana Passada">
-                <span>Semana Passada:</span> 
-                <div class="number">{formatar_valor(faturamento_semanal_passada)}</div>
-            </div>
-        """, unsafe_allow_html=True)
+# Criar gráfico de linhas com uma linha por ano
+fig = px.line(vendas_por_mes_ano_pandas, x='Mês', y='Valor_Total_Vendido', color='Ano',
+              title=f'Vendas por Mês ({data_inicial} a {data_final})',
+              labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
+              markers=True)
 
-    with col3:
-        st.markdown(f"""
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/10535/10535844.png" alt="Ícone Mês Atual">
-                <span>Mês Atual:</span> 
-                <div class="number">{formatar_valor(faturamento_mes_atual)}</div>
-                <small>Variação: {icone_variacao(var_faturamento_mes)}</small>
-            </div>
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/584/584052.png" alt="Ícone Mês Anterior">
-                <span>Mês Anterior:</span> 
-                <div class="number">{formatar_valor(faturamento_mes_anterior)}</div>
-            </div>
-        """, unsafe_allow_html=True)
+# Ajustes visuais
+fig.update_layout(
+    title_font_size=20,
+    xaxis_title_font_size=16,
+    yaxis_title_font_size=16,
+    xaxis_tickfont_size=14,
+    yaxis_tickfont_size=14,
+    xaxis_tickangle=-45,
+    xaxis=dict(tickmode='array', tickvals=list(range(1, 13)), ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'])
+)
 
-    with col4:
-        st.markdown(f"""
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/6632/6632848.png" alt="Ícone Pedidos Mês Atual">
-                <span>Pedidos Mês Atual:</span> 
-                <div class="number">{pedidos_mes_atual}</div>
-                <small>Variação: {icone_variacao(var_pedidos_mes)}</small>
-            </div>
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/925/925049.png" alt="Ícone Pedidos Mês Anterior">
-                <span>Pedidos Mês Anterior:</span> 
-                <div class="number">{pedidos_mes_anterior}</div>
-            </div>
-        """, unsafe_allow_html=True)
+st.plotly_chart(fig, use_container_width=True)
+```
 
-    with col5:
-        st.markdown(f"""
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/14018/14018701.png" alt="Ícone Pedidos Hoje">
-                <span>Pedidos Hoje:</span> 
-                <div class="number">{pedidos_hoje}</div>
-                <small>Variação: {icone_variacao(var_pedidos_hoje)}</small>
-            </div>
-            <div class="card-container">
-                <img src="https://cdn-icons-png.flaticon.com/512/5220/5220625.png" alt="Ícone Pedidos Ontem">
-                <span>Pedidos Ontem:</span> 
-                <div class="number">{pedidos_ontem}</div>
-            </div>
-        """, unsafe_allow_html=True)
+if **name** == "**main**":
+main()
 
-    st.markdown("---")
+pegue este codigo ajuste para ter um cache de alguma forma que facilite e nao precise sempre ficar buscando os mesmos dados, e sim buscar dados novos que forem inputados  no supabase, alem disso arrume o problema no grafico de linhas {
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.plotly_chart(grafico_pizza_variacao(["Hoje", "Ontem"], [abs(faturamento_hoje), abs(faturamento_ontem)], "Variação de Faturamento (Hoje x Ontem)"), use_container_width=True)
-    with col2:
-        st.plotly_chart(grafico_pizza_variacao(["Semana Atual", "Semana Passada"], [abs(faturamento_semanal_atual), abs(faturamento_semanal_passada)], "Variação de Faturamento (Semana)"), use_container_width=True)
-    with col3:
-        st.plotly_chart(grafico_pizza_variacao(["Mês Atual", "Mês Anterior"], [abs(faturamento_mes_atual), abs(faturamento_mes_anterior)], "Variação de Faturamento (Mês)"), use_container_width=True)
-    with col4:
-        st.plotly_chart(grafico_pizza_variacao(["Pedidos Mês Atual", "Pedidos Mês Passado"], [abs(pedidos_mes_atual), abs(pedidos_mes_anterior)], "Variação de Pedidos (Mês)"), use_container_width=True)
-    with col5:
-        st.plotly_chart(grafico_pizza_variacao(["Pedidos Hoje", "Pedidos Ontem"], [abs(pedidos_hoje), abs(pedidos_ontem)], "Variação de Pedidos (Hoje x Ontem)"), use_container_width=True)
+streamlit.errors.StreamlitAPIException: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
 
-    # Gráfico de linhas com seletores de data
-    st.markdown("---")
-    st.subheader("Comparação de Vendas por Mês e Ano")
-
-    col_data1, col_data2 = st.columns(2)
-    default_date = pd.to_datetime('2024-01-01')
-    with col_data1:
-        min_date = pd.to_datetime(data_filtrada['DATA_PEDIDO'].min()) if not data_filtrada.is_empty() else default_date
-        max_date = pd.to_datetime(data_filtrada['DATA_PEDIDO'].max()) if not data_filtrada.is_empty() else hoje
-        data_inicial = st.date_input(
-            "Data Inicial",
-            value=min_date.date() if min_date else default_date.date(),
-            min_value=min_date.date() if min_date else None,
-            max_value=max_date.date() if max_date else None
-        )
-    with col_data2:
-        data_final = st.date_input(
-            "Data Final",
-            value=max_date.date() if max_date else hoje.date(),
-            min_value=min_date.date() if min_date else None,
-            max_value=max_date.date() if max_date else None
-        )
-
-    if data_inicial > data_final:
-        st.error("A Data Inicial não pode ser maior que a Data Final.")
-        return
-
-    df_periodo = data_filtrada.filter(
-        (pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) &
-        (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final))
-    )
-
-    if df_periodo.is_empty():
-        st.warning("Nenhum dado disponível para o período selecionado.")
-        return
-
-    df_periodo = df_periodo.with_columns([
-        pl.col('DATA_PEDIDO').dt.year().cast(pl.Utf8).alias('Ano'),
-        pl.col('DATA_PEDIDO').dt.month().alias('Mês')
-    ])
-
-    vendas_por_mes_ano = df_periodo.group_by(['Ano', 'Mês']).agg(
-        Valor_Total_Vendido=pl.col('VLTOTAL').sum()
-    ).sort(['Ano', 'Mês'])
-
-    vendas_por_mes_ano_pandas = vendas_por_mes_ano.to_pandas()
-
-    fig = px.line(
-        vendas_por_mes_ano_pandas,
-        x='Mês',
-        y='Valor_Total_Vendido',
-        color='Ano',
-        title=f'Vendas por Mês ({data_inicial} a {data_final})',
-        labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
-        markers=True
-    )
-
-    fig.update_layout(
-        title_font_size=20,
-        xaxis_title_font_size=16,
-        yaxis_title_font_size=16,
-        xaxis_tickfont_size=14,
-        yaxis_tickfont_size=14,
-        xaxis_tickangle=-45,
-        xaxis=dict(
-            tickmode='array',
-            tickvals=list(range(1, 13)),
-            ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-        )
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-if __name__ == "__main__":
-    main()
+Traceback:
+File "/mount/src/test/Cobata.py", line 347, in <module>
+main()
+File "/mount/src/test/Cobata.py", line 339, in main
+load\_page(st.session\_state.page)
+File "/mount/src/test/Cobata.py", line 320, in load\_page
+page\_module.main()  # Presume que cada página tem uma função `main()`
+^^^^^^^^^^^^^^^^^^
+File "/mount/src/test/Página\_Inicial.py", line 381, in main
+data\_final = st.date\_input("Data Final", value=hoje, min\_value=data\_filtrada\['DATA\_PEDIDO'].min() if not data\_filtrada.is\_empty() else None, max\_value=data\_filtrada\['DATA\_PEDIDO'].max() if not data\_filtrada.is\_empty() else None)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/runtime/metrics\_util.py", line 409, in wrapped\_func
+result = non\_optional\_func(\*args, \*\*kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 741, in date\_input
+return self.\_date\_input(
+^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 832, in \_date\_input
+parsed\_values = \_DateInputValues.from\_raw\_values(
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 234, in from\_raw\_values
+return cls(
+^^^^
+File "<string>", line 7, in **init**
+File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 253, in **post\_init**
+raise StreamlitAPIException(
