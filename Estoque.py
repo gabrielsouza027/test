@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 import datetime
 import logging
 import time
@@ -23,7 +23,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("Erro: SUPABASE_URL ou SUPABASE_KEY não estão definidos.")
     st.stop()
 
-# Inicializar cliente Supabase
+# Inicializar cliente Supabase com timeout
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
@@ -65,29 +65,25 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
         raise
 
 @st.cache_data(show_spinner=False, ttl=900)
-def fetch_supabase_data(table, columns_expected, date_column=None, last_update=None, date_filter=None):
+def fetch_supabase_data(table, columns_expected, date_column=None, last_update=None):
     """Busca dados do Supabase com cache."""
-    key = f"{table}_{last_update or 'full'}_{date_filter or 'no_date'}"
+    key = f"{table}_{last_update or 'full'}"
     logger.info(f"Buscando dados da tabela {table}, chave: {key}")
 
     try:
         all_data = []
         limit = 100  # Aumentado para reduzir número de requisições
-        offset = 0
+        max_pages = 10  # Ajustado para evitar excesso de chamadas
         filters = []
 
         if last_update and date_column:
             filters.append((date_column, "gte", last_update.strftime('%Y-%m-%d')))
-        if date_filter and date_column:
-            filters.append((date_column, "eq", date_filter.strftime('%Y-%m-%d')))
 
-        while True:
+        for offset in range(0, limit * max_pages, limit):
             data = fetch_supabase_page(table, offset, limit, filters)
             if not data:
                 break
             all_data.extend(data)
-            offset += limit
-            logger.info(f"Total acumulado: {len(all_data)} registros da tabela {table}")
 
         if not all_data:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
@@ -113,7 +109,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, last_update=N
         logger.error(f"Erro geral: {e}")
         return pd.DataFrame()
 
-def fetch_vendas_data(date_filter=None):
+def fetch_vendas_data():
     """Busca dados de vendas."""
     config = SUPABASE_CONFIG["vendas"]
     last_update = st.session_state.get('last_vendas_update', None)
@@ -121,12 +117,11 @@ def fetch_vendas_data(date_filter=None):
         table=config["table"],
         columns_expected=config["columns"],
         date_column=config["date_column"],
-        last_update=last_update,
-        date_filter=date_filter
+        last_update=last_update
     )
     return df
 
-def fetch_estoque_data(date_filter=None):
+def fetch_estoque_data():
     """Busca dados de estoque."""
     config = SUPABASE_CONFIG["estoque"]
     last_update = st.session_state.get('last_estoque_update', None)
@@ -134,8 +129,7 @@ def fetch_estoque_data(date_filter=None):
         table=config["table"],
         columns_expected=config["columns"],
         date_column=config["date_column"],
-        last_update=last_update,
-        date_filter=date_filter
+        last_update=last_update
     )
     if not df.empty:
         for col in ['QTULTENT', 'QT_ESTOQUE', 'QTRESERV', 'QTINDENIZ', 'BLOQUEADA']:
@@ -162,36 +156,23 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    # Botão para recarregar manualmente
-    if st.button("🔄 Atualizar Dados"):
-        st.cache_data.clear()
-        st.rerun()
-
-    auto_reload()
-
-    # Definir hoje conforme o trecho fornecido
-    today = datetime.datetime.today()
-    hoje = pd.to_datetime(today).normalize()
-    ontem = hoje - datetime.timedelta(days=1)
-    semana_inicial = hoje - datetime.timedelta(days=hoje.weekday())
-    semana_passada_inicial = semana_inicial - datetime.timedelta(days=7)
-
-    # Usar hoje como filtro de data
-    date_filter = hoje
+    data_inicial = data_final - datetime.timedelta(days=370)
+    data_final = datetime.date.today()
+   
 
     with st.spinner("Carregando dados de vendas..."):
-        vendas_df = fetch_vendas_data(date_filter=date_filter)
+        vendas_df = fetch_vendas_data()
 
     if vendas_df.empty:
-        st.warning("Não há vendas para o dia selecionado.")
+        st.warning("Não há vendas para o período selecionado.")
     else:
         vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
 
     with st.spinner("Carregando dados de estoque..."):
-        estoque_df = fetch_estoque_data(date_filter=date_filter)
+        estoque_df = fetch_estoque_data()
 
     if estoque_df.empty:
-        st.warning("Não há dados de estoque para o dia selecionado.")
+        st.warning("Não há dados de estoque para o período selecionado.")
     else:
         merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
         sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
@@ -246,7 +227,7 @@ def main():
         if sem_estoque_df.empty:
             st.info("Não há produtos vendidos sem estoque.")
         else:
-            st.subheader("❌ Produtos Sem Estoque com Venda no Dia Selecionado")
+            st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
 
             sem_estoque_df_renomeado = sem_estoque_df[sem_estoque_df['QT_ESTOQUE'].isna() | (sem_estoque_df['QT_ESTOQUE'] <= 0)]
             sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
