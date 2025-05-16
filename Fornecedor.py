@@ -9,15 +9,25 @@ import os
 # Configuração do cache
 cache = TTLCache(maxsize=1, ttl=180)
 
-# Conexão com o Supabase usando variáveis de ambiente
+# Conexão com o Supabase usando st.secrets
 @st.cache_resource
 def init_connection():
-    url = ("SUPABASE_URL")
-    key = ("SUPABASE_KEY")
-    if not url or not key:
-        st.error("As variáveis de ambiente SUPABASE_URL e SUPABASE_KEY devem estar configuradas.")
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+    except KeyError as e:
+        st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
         return None
-    return create_client(url, key)
+
+    if not url or not key:
+        st.error("As variáveis SUPABASE_URL e SUPABASE_KEY devem estar configuradas no secrets.toml.")
+        return None
+
+    try:
+        return create_client(url, key)
+    except Exception as e:
+        st.error(f"Erro ao inicializar o cliente Supabase: {e}")
+        return None
 
 supabase: Client = init_connection()
 if supabase is None:
@@ -108,7 +118,7 @@ def main():
         st.write(f"Data máxima: {df['DATA'].max().strftime('%d/%m/%Y')}")
         return
 
-        # TABELA 1
+    # TABELA 1
     st.subheader("Valor Total por Fornecedor por Mês")
     search_term = st.text_input("Pesquisar Fornecedor:", "", key="search_fornecedor")
     
@@ -162,8 +172,8 @@ def main():
         st.warning("Nenhum fornecedor encontrado com o termo pesquisado.")
     else:
         gb = GridOptionsBuilder.from_dataframe(pivot_df)
-        gb.configure_default_column(sortable=True, filter=True, resizable=False, flex=1)  # flex=1 para distribuir espaço igualmente
-        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", width=200)  # Largura fixa para a coluna Fornecedor
+        gb.configure_default_column(sortable=True, filter=True, resizable=False, flex=1)
+        gb.configure_column("FORNECEDOR", headerName="Fornecedor", pinned="left", width=200)
     
         for col in pivot_df.columns:
             if col != "FORNECEDOR":
@@ -172,13 +182,13 @@ def main():
                     type=["numericColumn"],
                     valueFormatter="x.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})",
                     cellRenderer="agAnimateShowChangeCellRenderer",
-                    flex=1  # Todas as colunas compartilham o espaço igualmente
+                    flex=1
                 )
     
         gb.configure_grid_options(
-            domLayout='normal',  # Evita autoHeight para usar altura fixa
-            suppressHorizontalScroll=False,  # Permite rolagem horizontal se necessário
-            autoSizeStrategy=None  # Desativa auto-ajuste para usar flex
+            domLayout='normal',
+            suppressHorizontalScroll=False,
+            autoSizeStrategy=None
         )
     
         AgGrid(
@@ -187,8 +197,8 @@ def main():
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             allow_unsafe_jscode=True,
             theme="streamlit",
-            height=400,  # Altura fixa da tabela
-            fit_columns_on_grid_load=False  # Evita ajuste automático das colunas
+            height=400,
+            fit_columns_on_grid_load=False
         )
     
         csv = pivot_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
@@ -200,7 +210,7 @@ def main():
 
     df_filtered_range = df[df['ANO'] >= 2024]
     anos = sorted(df_filtered_range['ANO'].unique())
-    meses = sorted(df_filtered_range['MES'].unique())  # Fixed syntax error
+    meses = sorted(df_filtered_range['MES'].unique())
     meses_nomes = [month_names[m] for m in meses]
 
     current_year = today.year
