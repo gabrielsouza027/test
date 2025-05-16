@@ -161,7 +161,17 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    auto_reload()
+    st.markdown("""
+    <style>
+    .ag-root-wrapper {
+        width: 100% !important;
+    }
+    .ag-header-cell {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     data_final = datetime.date.today()
     data_inicial = data_final - datetime.timedelta(days=60)
