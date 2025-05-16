@@ -168,15 +168,26 @@ def carregar_dados(_last_fetched=None):
             st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
             return pl.DataFrame()
 
-        # Garantir tipos de dados
-        combined_df = combined_df.with_columns([
-            pl.col('PVENDA').cast(pl.Float64).fill_null(0),
-            pl.col('QT').cast(pl.Float64).fill_null(0),
-            pl.col('CODFILIAL').cast(pl.Utf8),
-            pl.col('NUMPED').cast(pl.Utf8),
-            pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%dT%H:%M:%S", strict=False),
-            (pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL').fill_null(0)
-        ])
+        # Processar DATA_PEDIDO com múltiplos formatos
+        if not combined_df['DATA_PEDIDO'].is_empty():
+            # Log alguns valores para debug
+            sample_dates = combined_df['DATA_PEDIDO'].head(5).to_list()
+            logger.info(f"Amostra de DATA_PEDIDO: {sample_dates}")
+            combined_df = combined_df.with_columns([
+                pl.col('PVENDA').cast(pl.Float64).fill_null(0),
+                pl.col('QT').cast(pl.Float64).fill_null(0),
+                pl.col('CODFILIAL').cast(pl.Utf8),
+                pl.col('NUMPED').cast(pl.Utf8),
+                pl.when(pl.col('DATA_PEDIDO').str.lengths() > 0)
+                .then(pl.col('DATA_PEDIDO').str.to_datetime(
+                    [ "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d" ],
+                    strict=False
+                ))
+                .otherwise(None).alias('DATA_PEDIDO')
+            ])
+
+        # Recalcular VLTOTAL para consistência
+        combined_df = combined_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL').fill_null(0))
 
         # Filtrar apenas filiais 1 e 2
         combined_df = combined_df.filter(pl.col('CODFILIAL').is_in(['1', '2']))
@@ -294,14 +305,6 @@ def main():
 
     st.title('Dashboard de Faturamento')
     st.markdown("### Resumo de Vendas")
-
-    # Botão para limpar cache
-    if st.button("Limpar Cache"):
-        if os.path.exists("cache.pkl"):
-            os.remove("cache.pkl")
-            st.session_state.last_fetched = None
-            st.cache_data.clear()
-            st.rerun()
 
     # Inicializar session state para last_fetched
     if 'last_fetched' not in st.session_state:
