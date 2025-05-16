@@ -54,6 +54,7 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
         if filter_query:
             for filtro in filter_query:
                 column, operator, value = filtro
+                logger.info(f"Aplicando filtro: {column} {operator} {value}")
                 if operator == "in":
                     query = query.in_(column, value)
                 else:
@@ -66,14 +67,16 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
         raise
 
-def save_cache(data, filename="cache.pkl"):
+def save_cache(data, table_name, filename="cache.pkl"):
     """Salva o cache em arquivo."""
     try:
+        cache = load_cache(filename) or {}
+        cache[table_name] = data
         with open(filename, "wb") as f:
-            pickle.dump(data, f)
-        logger.info(f"Cache salvo em {filename}")
+            pickle.dump(cache, f)
+        logger.info(f"Cache salvo em {filename} para {table_name}")
     except Exception as e:
-        logger.warning(f"Erro ao salvar cache: {e}")
+        logger.warning(f"Erro ao salvar cache para {table_name}: {e}")
 
 def load_cache(filename="cache.pkl"):
     """Carrega o cache de arquivo."""
@@ -96,8 +99,10 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 
     try:
         # Carregar cache existente
-        cached_data = load_cache()
+        cache = load_cache()
+        cached_data = cache.get(table, []) if cache else []
         cached_df = pd.DataFrame(cached_data) if cached_data else pd.DataFrame()
+        logger.info(f"Dados do cache para {table}: {len(cached_df)} registros")
 
         all_data = []
         limit = 1000
@@ -106,10 +111,11 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 
         if last_fetched and date_column:
             filters.append((date_column, "gt", last_fetched.strftime('%Y-%m-%d')))
-        if start_date and date_column:
-            filters.append((date_column, "gte", start_date.strftime('%Y-%m-%d')))
-        if end_date and date_column:
-            filters.append((date_column, "lte", end_date.strftime('%Y-%m-%d')))
+        # Comentando filtros de data para depuração
+        # if start_date and date_column:
+        #     filters.append((date_column, "gte", start_date.strftime('%Y-%m-%d')))
+        # if end_date and date_column:
+        #     filters.append((date_column, "lte", end_date.strftime('%Y-%m-%d')))
 
         while True:
             data = fetch_supabase_page(table, offset, limit, filters)
@@ -120,11 +126,12 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
             logger.info(f"Total acumulado: {len(all_data)} registros da tabela {table}")
 
         if not all_data and cached_data is None:
-            logger.warning(f"Nenhum dado retornado da tabela {table}")
+            logger.warning(f"Nenhum dado retornado da tabela {table} e nenhum cache disponível")
             return pd.DataFrame(columns=columns_expected)
 
         # Converter novos dados para DataFrame
         new_df = pd.DataFrame(all_data) if all_data else pd.DataFrame()
+        logger.info(f"Dados novos para {table}: {len(new_df)} registros")
 
         # Combinar cache com novos dados, removendo duplicatas por CODPROD
         if not new_df.empty():
@@ -145,13 +152,18 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
             return pd.DataFrame(columns=columns_expected)
 
         if date_column in combined_df.columns:
+            logger.info(f"Convertendo coluna de data {date_column} para {table}")
             combined_df[date_column] = pd.to_datetime(combined_df[date_column], errors='coerce')
+            null_dates = combined_df[date_column].isna().sum()
+            logger.info(f"Registros com data nula em {date_column}: {null_dates}")
             combined_df = combined_df.dropna(subset=[date_column])
 
-        if not combined_df.empty:
-            save_cache(combined_df.to_dict())
+        if not combined_df.empty():
+            save_cache(combined_df.to_dict(), table, filename="cache.pkl")
             if date_column:
-                st.session_state[f'last_{table}_update'] = combined_df[date_column].max()
+                max_date = combined_df[date_column].max()
+                logger.info(f"Data mais recente para {table}: {max_date}")
+                st.session_state[f'last_{table}_update'] = max_date
 
         logger.info(f"Dados carregados com sucesso da tabela {table}: {len(combined_df)} registros")
         return combined_df
@@ -234,6 +246,8 @@ def main():
 
     with st.spinner("Carregando dados de vendas..."):
         vendas_df = fetch_vendas_data(start_date=data_inicial, end_date=data_final)
+    st.write("**Dados de Vendas (Debug):**")
+    st.write(vendas_df.head())
 
     if not vendas_df.empty:
         vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
@@ -242,6 +256,8 @@ def main():
 
     with st.spinner("Carregando dados de estoque..."):
         estoque_df = fetch_estoque_data(start_date=data_inicial, end_date=data_final)
+    st.write("**Dados de Estoque (Debug):**")
+    st.write(estoque_df.head())
 
     if not estoque_df.empty:
         merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
@@ -303,17 +319,16 @@ def main():
     gb.configure_grid_options(
         domLayout='normal',
         autoSizeColumns=True,
-        suppressColumnVirtualisation=True  # Garante que todas as colunas sejam renderizadas
+        suppressColumnVirtualisation=True
     )
     grid_options = gb.build()
 
-    # Forçar ajuste de largura e preencher espaço
     grid_options['fit_columns_on_grid_load'] = True
     grid_options['defaultColDef'] = {
-        'minWidth': 100,  # Largura mínima para colunas
+        'minWidth': 100,
         'wrapText': True,
         'autoHeight': True,
-        'flex': 1  # Permite que colunas se ajustem ao espaço disponível
+        'flex': 1
     }
 
     df_display = df.copy()
@@ -371,17 +386,16 @@ def main():
         gb.configure_grid_options(
             domLayout='normal',
             autoSizeColumns=True,
-            suppressColumnVirtualisation=True  # Garante que todas as colunas sejam renderizadas
+            suppressColumnVirtualisation=True
         )
         grid_options = gb.build()
 
-        # Forçar ajuste de largura e preencher espaço
         grid_options['fit_columns_on_grid_load'] = True
         grid_options['defaultColDef'] = {
-            'minWidth': 150,  # Largura mínima maior para melhor visibilidade
+            'minWidth': 150,
             'wrapText': True,
             'autoHeight': True,
-            'flex': 1  # Permite que colunas se ajustem ao espaço disponível
+            'flex': 1
         }
 
         df_sem_estoque_display = sem_estoque_df_renomeado.copy()
