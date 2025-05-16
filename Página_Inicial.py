@@ -51,7 +51,7 @@ st.stop()
 
 # Função para carregar dados de uma única tabela
 
-def fetch\_table\_data(table, page\_size=1000):
+def fetch\_table\_data(table, page\_size=150023):
 table\_name = table\["table\_name"]
 url = table\["url"]
 logger.info(f"Carregando dados da tabela {table\_name}")
