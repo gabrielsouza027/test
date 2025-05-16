@@ -244,7 +244,7 @@ def main():
     for col in ['Data Última Entrada', 'Data Última Saída', 'Data Último Pedido Compra']:
         df_display[col] = df_display[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else "")
 
-    AgGrid(df_display if not df_display.empty else pd.DataFrame(columns=df_display.columns), gridOptions=grid_options, update_mode=GridUpdateMode.MANUAL_UPDATE, allow_unsafe_jscode=True, theme='streamlit')
+    AgGrid(df_display if not df_display.empty else pd.DataFrame(columns=df_display.columns), gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, theme='streamlit')
 
     if not sem_estoque_df.empty:
         st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
