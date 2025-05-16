@@ -439,33 +439,3 @@ st.plotly_chart(fig, use_container_width=True)
 if **name** == "**main**":
 main()
 
-pegue este codigo ajuste para ter um cache de alguma forma que facilite e nao precise sempre ficar buscando os mesmos dados, e sim buscar dados novos que forem inputados  no supabase, alem disso arrume o problema no grafico de linhas {
-
-streamlit.errors.StreamlitAPIException: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
-
-Traceback:
-File "/mount/src/test/Cobata.py", line 347, in <module>
-main()
-File "/mount/src/test/Cobata.py", line 339, in main
-load\_page(st.session\_state.page)
-File "/mount/src/test/Cobata.py", line 320, in load\_page
-page\_module.main()  # Presume que cada página tem uma função `main()`
-^^^^^^^^^^^^^^^^^^
-File "/mount/src/test/Página\_Inicial.py", line 381, in main
-data\_final = st.date\_input("Data Final", value=hoje, min\_value=data\_filtrada\['DATA\_PEDIDO'].min() if not data\_filtrada.is\_empty() else None, max\_value=data\_filtrada\['DATA\_PEDIDO'].max() if not data\_filtrada.is\_empty() else None)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/runtime/metrics\_util.py", line 409, in wrapped\_func
-result = non\_optional\_func(\*args, \*\*kwargs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 741, in date\_input
-return self.\_date\_input(
-^^^^^^^^^^^^^^^^^
-File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 832, in \_date\_input
-parsed\_values = \_DateInputValues.from\_raw\_values(
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 234, in from\_raw\_values
-return cls(
-^^^^
-File "<string>", line 7, in **init**
-File "/home/adminuser/venv/lib/python3.12/site-packages/streamlit/elements/widgets/time\_widgets.py", line 253, in **post\_init**
-raise StreamlitAPIException(
