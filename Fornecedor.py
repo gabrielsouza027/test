@@ -77,7 +77,6 @@ def get_all_data_from_supabase():
             df['VALOR_TOTAL_ITEM'] = df['QT'] * df['PVENDA']
 
             cache["all_data"] = df
-            st.success(f"Dados carregados com sucesso: {len(df)} registros.")
         except Exception as e:
             st.error(f"Erro ao buscar dados do Supabase: {e}")
             cache["all_data"] = pd.DataFrame()
