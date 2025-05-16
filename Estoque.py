@@ -72,7 +72,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, last_update=N
 
     try:
         all_data = []
-        limit = 1000  # Aumentado para reduzir número de requisições
+        limit = 100  # Aumentado para reduzir número de requisições
         offset = 0
         filters = []
 
