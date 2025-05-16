@@ -327,7 +327,7 @@ def main():
 
         grid_options['fit_columns_on_grid_load'] = True
         grid_options['defaultColDef'] = {
-            'minWidth': 150,
+            'minWidth': 300,
             'wrapText': True,
             'autoHeight': True,
             'flex': 1
