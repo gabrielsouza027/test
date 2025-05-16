@@ -2,12 +2,17 @@ import streamlit as st
 import polars as pl
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+import sqlite3
+from datetime import datetime, timedelta, date
 import locale
 import plotly.express as px
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+from urllib.parse import urlencode
+import threading
+import time
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -20,99 +25,250 @@ except locale.Error:
     logger.warning("Locale 'pt_BR.UTF-8' não disponível, usando padrão.")
     locale.setlocale(locale.LC_ALL, '')
 
-# Configuração das URLs e tabelas do Supabase
-SUPABASE_TABLES = [
-    {
-        "table_name": "PCPEDC",
-        "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
-    },
-    # Adicione mais tabelas aqui, se necessário
-    # {
-    #     "table_name": "VWSOMELIER",
-    #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*"
-    # },
-]
-
-# Cabeçalhos comuns para todas as requisições
-def get_headers():
-    try:
-        return {
-            "apikey": st.secrets["SUPABASE_KEY"],
-            "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
+# Configuração da conexão com o Supabase
+class SupabaseConnection:
+    def __init__(self, url, key, db_path="supabase_cache.db"):
+        self.base_url = url
+        self.key = key
+        self.db_path = db_path
+        self.headers = {
+            "apikey": self.key,
+            "Authorization": f"Bearer {self.key}",
             "Accept": "application/json"
         }
-    except KeyError as e:
-        st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
-        st.stop()
+        self.tables = [
+            {
+                "table_name": "PCPEDC",
+                "url": f"{self.base_url}/rest/v1/PCPEDC?select=*"
+            }
+        ]
+        self._init_cache()
+        self._memory_cache = None  # In-memory cache
+        self._lock = threading.Lock()  # Thread-safe cache updates
+        self._last_sync = 0  # Timestamp of last sync
+        self._start_background_sync()
 
-# Função para carregar dados de uma única tabela
-def fetch_table_data(table, page_size=1000):
-    table_name = table["table_name"]
-    url = table["url"]
-    logger.info(f"Carregando dados da tabela {table_name}")
-    all_data = []
-
-    offset = 0
-    while True:
-        headers = get_headers()
-        headers["Range"] = f"{offset}-{offset + page_size - 1}"
-        
+    def _init_cache(self):
+        """Initialize SQLite database for caching with indexes."""
         try:
-            response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if not data:
-                logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
-                break
-            all_data.extend(data)
-            offset += page_size
-            logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-            return []
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS PCPEDC (
+                        NUMPED TEXT PRIMARY KEY,
+                        PVENDA REAL,
+                        QT INTEGER,
+                        CODFILIAL TEXT,
+                        DATA_PEDIDO TEXT,
+                        VLTOTAL REAL,
+                        last_updated TEXT
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                # Add indexes for faster queries
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_data_pedido ON PCPEDC(DATA_PEDIDO)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_codfilial ON PCPEDC(CODFILIAL)")
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Erro ao inicializar cache SQLite: {e}")
+            st.error(f"Erro ao inicializar cache: {e}")
+            raise
 
-    return all_data
+    def _get_latest_timestamp(self):
+        """Get the latest DATA_PEDIDO from the cache, or a default for initial fetch."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT MAX(DATA_PEDIDO) FROM PCPEDC")
+                result = cursor.fetchone()[0]
+                if result:
+                    # Use a 7-day window to catch delayed updates
+                    latest_date = datetime.fromisoformat(result.replace('Z', '+00:00'))
+                    return (latest_date - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                return "1970-01-01T00:00:00Z"
+        except sqlite3.Error as e:
+            logger.error(f"Erro ao obter último timestamp: {e}")
+            return "1970-01-01T00:00:00Z"
 
-# Função para carregar dados do Supabase com cache, paralelismo e Polars
+    def fetch_new_data(self, table, page_size=1000):
+        """Fetch data from Supabase, either all data (initial fetch) or new data."""
+        table_name = table["table_name"]
+        latest_timestamp = self._get_latest_timestamp()
+        logger.info(f"Buscando dados da tabela {table_name} após {latest_timestamp}")
+
+        # Construir URL com filtro para novos dados (skip filter for initial fetch)
+        url = table["url"]
+        if latest_timestamp != "1970-01-01T00:00:00Z":
+            query_params = {
+                "DATA_PEDIDO": f"gte.{latest_timestamp}",
+                "order": "DATA_PEDIDO.asc"
+            }
+            url = f"{url}&{urlencode(query_params)}"
+        
+        all_data = []
+        offset = 0
+        while True:
+            headers = self.headers.copy()
+            headers["Range"] = f"{offset}-{offset + page_size - 1}"
+            try:
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                if not data:
+                    logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
+                    break
+                all_data.extend(data)
+                offset += len(data)
+                logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total: {len(all_data)}")
+                
+                # Log Content-Range for debugging
+                content_range = response.headers.get("Content-Range", "")
+                logger.info(f"Content-Range: {content_range}")
+                
+                # Stop if fewer than page_size records are returned
+                if len(data) < page_size:
+                    break
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
+                return all_data  # Return partial data if available
+
+        # Log unique CODFILIAL values for debugging
+        codfiliais = set(record.get('CODFILIAL') for record in all_data)
+        logger.info(f"Valores de CODFILIAL encontrados: {codfiliais}")
+
+        return all_data
+
+    def update_cache(self, data):
+        """Update SQLite cache with new or updated data using batch inserts."""
+        if not data:
+            return
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                batch = []
+                for record in data:
+                    pvenda = float(record.get('PVENDA', 0)) if record.get('PVENDA') else 0
+                    qt = int(record.get('QT', 0)) if record.get('QT') else 0
+                    vltotal = pvenda * qt
+                    batch.append((
+                        record.get('NUMPED'),
+                        pvenda,
+                        qt,
+                        str(record.get('CODFILIAL', '')),
+                        record.get('DATA_PEDIDO'),
+                        vltotal,
+                        record.get('DATA_PEDIDO')
+                    ))
+                cursor.executemany("""
+                    INSERT OR REPLACE INTO PCPEDC (
+                        NUMPED, PVENDA, QT, CODFILIAL, DATA_PEDIDO, VLTOTAL, last_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, batch)
+                conn.commit()
+                logger.info(f"Cache atualizado com {len(data)} registros")
+        except sqlite3.Error as e:
+            logger.error(f"Erro ao atualizar cache: {e}")
+            st.error(f"Erro ao atualizar cache: {e}")
+
+    def load_from_cache(self):
+        """Load all data from SQLite cache into a Polars DataFrame."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                query = "SELECT NUMPED, PVENDA, QT, CODFILIAL, DATA_PEDIDO, VLTOTAL FROM PCPEDC"
+                df = pl.read_database(query, conn)
+                if df.is_empty():
+                    logger.warning("Cache vazio")
+                    return pl.DataFrame()
+                # Garantir tipos de dados
+                df = df.with_columns([
+                    pl.col('PVENDA').cast(pl.Float32).fill_null(0),
+                    pl.col('QT').cast(pl.Int32).fill_null(0),
+                    pl.col('CODFILIAL').cast(pl.Utf8),
+                    pl.col('NUMPED').cast(pl.Utf8),
+                    pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False),
+                    pl.col('VLTOTAL').cast(pl.Float32).fill_null(0)
+                ])
+                logger.info(f"Carregados {len(df)} registros do cache")
+                return df
+        except Exception as e:
+            logger.error(f"Erro ao carregar dados do cache: {e}")
+            return pl.DataFrame()
+
+    def _update_memory_cache(self):
+        """Update in-memory cache with latest data."""
+        with self._lock:
+            data = self.load_from_cache()
+            if not data.is_empty():
+                self._memory_cache = data
+                self._last_sync = time.time()
+                logger.info(f"Memória cache atualizada: {len(data)} registros")
+
+    def sync_data(self):
+        """Synchronize cache with Supabase and update memory cache."""
+        try:
+            with ThreadPoolExecutor() as executor:
+                new_data = list(executor.map(self.fetch_new_data, self.tables))
+            all_new_data = []
+            for result in new_data:
+                all_new_data.extend(result)
+            self.update_cache(all_new_data)
+            self._update_memory_cache()
+            data = self._memory_cache if self._memory_cache is not None else self.load_from_cache()
+            if not data.is_empty():
+                date_range = (data['DATA_PEDIDO'].min(), data['DATA_PEDIDO'].max())
+                logger.info(f"Dados carregados: {len(data)} registros, intervalo de datas: {date_range}")
+            return data
+        except Exception as e:
+            logger.error(f"Erro ao sincronizar dados: {e}")
+            # Fallback to memory cache or SQLite cache
+            with self._lock:
+                if self._memory_cache is not None:
+                    logger.info(f"Usando memória cache após falha de sincronização: {len(self._memory_cache)} registros")
+                    return self._memory_cache
+            data = self.load_from_cache()
+            if not data.is_empty():
+                logger.info(f"Usando dados do cache SQLite após falha de sincronização: {len(data)} registros")
+                return data
+            st.error(f"Erro ao sincronizar dados: {e}")
+            return pl.DataFrame()
+
+    def _background_sync(self):
+        """Run sync_data periodically in the background."""
+        SYNC_INTERVAL = 300  # 5 minutes in seconds
+        while True:
+            try:
+                if time.time() - self._last_sync >= SYNC_INTERVAL:
+                    logger.info("Iniciando sincronização em segundo plano")
+                    self.sync_data()
+            except Exception as e:
+                logger.error(f"Erro na sincronização em segundo plano: {e}")
+            time.sleep(SYNC_INTERVAL)
+
+    def _start_background_sync(self):
+        """Start background sync thread."""
+        thread = threading.Thread(target=self._background_sync, daemon=True)
+        thread.start()
+        logger.info("Sincronização em segundo plano iniciada")
+
+# Função para carregar dados com cache
 @st.cache_data(show_spinner=False, ttl=900)
 def carregar_dados():
     try:
-        # Carregar dados em paralelo usando ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(fetch_table_data, SUPABASE_TABLES))
-        
-        # Combinar todos os dados
-        all_data = []
-        for result in results:
-            all_data.extend(result)
-
-        if not all_data:
-            logger.warning("Nenhum dado retornado pela API")
-            st.error("Nenhum dado retornado pela API.")
+        supabase = SupabaseConnection(
+            url=st.secrets["SUPABASE_URL"],
+            key=st.secrets["SUPABASE_KEY"]
+        )
+        # Sincronizar dados (carrega do cache e busca novos dados)
+        data = supabase.sync_data()
+        if data.is_empty():
+            logger.warning("Nenhum dado disponível após sincronização")
+            st.error("Nenhum dado disponível. Verifique a conexão com o Supabase.")
             return pl.DataFrame()
-
-        # Converter para Polars DataFrame
-        data = pl.DataFrame(all_data)
-
-        # Verificar se as colunas necessárias existem
-        required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
-        missing_columns = [col for col in required_columns if col not in data.columns]
-        if missing_columns:
-            logger.error(f"Colunas ausentes nos dados: {missing_columns}")
-            st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
-            return pl.DataFrame()
-
-        # Garantir tipos de dados
-        data = data.with_columns([
-            pl.col('PVENDA').cast(pl.Float32, strict=False).fill_null(0),
-            pl.col('QT').cast(pl.Int32, strict=False).fill_null(0),
-            pl.col('CODFILIAL').cast(pl.Utf8),
-            pl.col('NUMPED').cast(pl.Utf8),
-            pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False)
-        ])
-
-        # Calcular VLTOTAL como PVENDA * QT
-        data = data.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL'))
 
         # Filtrar apenas filiais 1 e 2
         data = data.filter(pl.col('CODFILIAL').is_in(['1', '2']))
@@ -125,7 +281,6 @@ def carregar_dados():
 
         logger.info(f"Dados carregados com sucesso: {len(data)} registros")
         return data
-
     except Exception as e:
         logger.error(f"Erro geral ao processar dados: {e}")
         st.error(f"Erro ao processar dados: {e}")
@@ -161,12 +316,12 @@ def calcular_variacao(atual, anterior):
     return ((atual - anterior) / anterior) * 100
 
 def icone_variacao(valor):
-        if valor > 0:
-            return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
-        elif valor < 0:
-            return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
-        else:
-            return f"{valor:.2f}%"
+    if valor > 0:
+        return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
+    elif valor < 0:
+        return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
+    else:
+        return f"{valor:.2f}%"
 
 def formatar_valor(valor):
     try:
@@ -216,7 +371,7 @@ def main():
     st.markdown("### Resumo de Vendas")
 
     # Carregar dados com cache
-    with st.spinner("Carregando dados do Supabase..."):
+    with st.spinner("Carregando dados..."):
         data = carregar_dados()
     
     if data.is_empty():
@@ -244,8 +399,8 @@ def main():
     # Filtrar dados com base nas filiais selecionadas
     data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
 
-    today = datetime.today()  # Obter a data atual com hora
-    hoje = pd.to_datetime(today).normalize()  # Normalizar para meia-noite
+    today = datetime.today()
+    hoje = pd.to_datetime(today).normalize()
     ontem = hoje - timedelta(days=1)
     semana_inicial = hoje - timedelta(days=hoje.weekday())
     semana_passada_inicial = semana_inicial - timedelta(days=7)
@@ -375,18 +530,31 @@ def main():
     # Seletores de data
     col_data1, col_data2 = st.columns(2)
     with col_data1:
-        default_inicial = data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else pd.to_datetime('2024-01-01')
-        data_inicial = st.date_input("Data Inicial", value=default_inicial, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.is_empty() else None)
+        min_date = data_filtrada['DATA_PEDIDO'].min().date() if not data_filtrada.is_empty() else date(2024, 1, 1)
+        data_inicial = st.date_input(
+            "Data Inicial",
+            value=min_date,
+            min_value=min_date,
+            max_value=date.today()
+        )
     with col_data2:
-        data_final = st.date_input("Data Final", value=hoje, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.is_empty() else None)
+        max_date = data_filtrada['DATA_PEDIDO'].max().date() if not data_filtrada.is_empty() else date.today()
+        data_final = st.date_input(
+            "Data Final",
+            value=date.today(),
+            min_value=min_date,
+            max_value=date.today()
+        )
 
     if data_inicial > data_final:
         st.error("A Data Inicial não pode ser maior que a Data Final.")
         return
 
     # Filtrar dados pelo período selecionado
-    df_periodo = data_filtrada.filter((pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) & 
-                                     (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final)))
+    df_periodo = data_filtrada.filter(
+        (pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) & 
+        (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final))
+    )
 
     if df_periodo.is_empty():
         st.warning("Nenhum dado disponível para o período selecionado.")
@@ -407,10 +575,15 @@ def main():
     vendas_por_mes_ano_pandas = vendas_por_mes_ano.to_pandas()
 
     # Criar gráfico de linhas com uma linha por ano
-    fig = px.line(vendas_por_mes_ano_pandas, x='Mês', y='Valor_Total_Vendido', color='Ano',
-                  title=f'Vendas por Mês ({data_inicial} a {data_final})',
-                  labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
-                  markers=True)
+    fig = px.line(
+        vendas_por_mes_ano_pandas,
+        x='Mês',
+        y='Valor_Total_Vendido',
+        color='Ano',
+        title=f'Vendas por Mês ({data_inicial} a {data_final})',
+        labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
+        markers=True
+    )
 
     # Ajustes visuais
     fig.update_layout(
@@ -420,11 +593,14 @@ def main():
         xaxis_tickfont_size=14,
         yaxis_tickfont_size=14,
         xaxis_tickangle=-45,
-        xaxis=dict(tickmode='array', tickvals=list(range(1, 13)), ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'])
+        xaxis=dict(
+            tickmode='array',
+            tickvals=list(range(1, 13)),
+            ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        )
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
-
