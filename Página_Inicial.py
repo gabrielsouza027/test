@@ -3,7 +3,7 @@ import polars as pl
 import pandas as pd
 import requests
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import locale
 import plotly.express as px
 import logging
@@ -71,31 +71,37 @@ class SupabaseConnection:
             raise
 
     def _get_latest_timestamp(self):
-        """Get the latest DATA_PEDIDO or last_updated from the cache."""
+        """Get the latest DATA_PEDIDO from the cache, or a default for initial fetch."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT MAX(DATA_PEDIDO) FROM PCPEDC")
                 result = cursor.fetchone()[0]
-                return result if result else "1970-01-01T00:00:00Z"
+                if result:
+                    # Use a 7-day window to catch delayed updates
+                    latest_date = datetime.fromisoformat(result.replace('Z', '+00:00'))
+                    return (latest_date - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                return "1970-01-01T00:00:00Z"
         except sqlite3.Error as e:
             logger.error(f"Erro ao obter último timestamp: {e}")
             return "1970-01-01T00:00:00Z"
 
     def fetch_new_data(self, table, page_size=1000):
-        """Fetch only new data from Supabase based on the latest timestamp."""
+        """Fetch data from Supabase, either all data (initial fetch) or new data."""
         table_name = table["table_name"]
         latest_timestamp = self._get_latest_timestamp()
-        logger.info(f"Buscando novos dados da tabela {table_name} após {latest_timestamp}")
+        logger.info(f"Buscando dados da tabela {table_name} após {latest_timestamp}")
 
-        # Construir URL com filtro para novos dados
-        query_params = {
-            "DATA_PEDIDO": f"gte.{latest_timestamp}",
-            "order": "DATA_PEDIDO.asc"
-        }
-        url = f"{table['url']}&{urlencode(query_params)}"
+        # Construir URL com filtro para novos dados (skip filter for initial fetch)
+        url = table["url"]
+        if latest_timestamp != "1970-01-01T00:00:00Z":
+            query_params = {
+                "DATA_PEDIDO": f"gte.{latest_timestamp}",
+                "order": "DATA_PEDIDO.asc"
+            }
+            url = f"{url}&{urlencode(query_params)}"
+        
         all_data = []
-
         offset = 0
         while True:
             headers = self.headers.copy()
@@ -105,14 +111,25 @@ class SupabaseConnection:
                 response.raise_for_status()
                 data = response.json()
                 if not data:
-                    logger.info(f"Finalizada a recuperação de novos dados da tabela {table_name}")
+                    logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
                     break
                 all_data.extend(data)
-                offset += page_size
-                logger.info(f"Recuperados {len(data)} novos registros da tabela {table_name}")
+                offset += len(data)  # Use actual data length to handle partial pages
+                logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total: {len(all_data)}")
+                
+                # Check Content-Range to ensure all data is fetched
+                content_range = response.headers.get("Content-Range", "")
+                if content_range:
+                    total = int(content_range.split("/")[-1]) if "/" in content_range else len(all_data)
+                    if len(all_data) >= total:
+                        break
             except requests.exceptions.RequestException as e:
-                logger.error(f"Erro ao buscar novos dados da tabela {table_name}: {e}")
+                logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
                 return []
+
+        # Log unique CODFILIAL values for debugging
+        codfiliais = set(record.get('CODFILIAL') for record in all_data)
+        logger.info(f"Valores de CODFILIAL encontrados: {codfiliais}")
 
         return all_data
 
@@ -135,10 +152,10 @@ class SupabaseConnection:
                         record.get('NUMPED'),
                         pvenda,
                         qt,
-                        record.get('CODFILIAL'),
+                        str(record.get('CODFILIAL', '')),  # Ensure CODFILIAL is string
                         record.get('DATA_PEDIDO'),
                         vltotal,
-                        record.get('DATA_PEDIDO')  # Usando DATA_PEDIDO como last_updated
+                        record.get('DATA_PEDIDO')
                     ))
                 conn.commit()
                 logger.info(f"Cache atualizado com {len(data)} registros")
@@ -179,7 +196,12 @@ class SupabaseConnection:
             for result in new_data:
                 all_new_data.extend(result)
             self.update_cache(all_new_data)
-            return self.load_from_cache()
+            data = self.load_from_cache()
+            # Log data summary for debugging
+            if not data.is_empty():
+                date_range = (data['DATA_PEDIDO'].min(), data['DATA_PEDIDO'].max())
+                logger.info(f"Dados carregados: {len(data)} registros, intervalo de datas: {date_range}")
+            return data
         except Exception as e:
             logger.error(f"Erro ao sincronizar dados: {e}")
             st.error(f"Erro ao sincronizar dados: {e}")
@@ -329,8 +351,8 @@ def main():
     # Filtrar dados com base nas filiais selecionadas
     data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
 
-    today = datetime.today()  # Obter a data atual com hora
-    hoje = pd.to_datetime(today).normalize()  # Normalizar para meia-noite
+    today = datetime.today()
+    hoje = pd.to_datetime(today).normalize()
     ontem = hoje - timedelta(days=1)
     semana_inicial = hoje - timedelta(days=hoje.weekday())
     semana_passada_inicial = semana_inicial - timedelta(days=7)
@@ -447,7 +469,7 @@ def main():
     with col2:
         st.plotly_chart(grafico_pizza_variacao(["Semana Atual", "Semana Passada"], [abs(faturamento_semanal_atual), abs(faturamento_semanal_passada)], "Variação de Faturamento (Semana)"), use_container_width=True)
     with col3:
-        st.plotly_chart(grafico_pizza_variacao(["Mês Atual", "Mês Anterior"], [abs(faturamento_mes_atual), abs(faturamento_mes_anterior)], "Variação de Faturamento (Mês)"), use_container_width=True)
+        st.plotly_chart(grafico_pizza_variacao(["isuus Atual", "Mês Anterior"], [abs(faturamento_mes_atual), abs(faturamento_mes_anterior)], "Variação de Faturamento (Mês)"), use_container_width=True)
     with col4:
         st.plotly_chart(grafico_pizza_variacao(["Pedidos Mês Atual", "Pedidos Mês Passado"], [abs(pedidos_mes_atual), abs(pedidos_mes_anterior)], "Variação de Pedidos (Mês)"), use_container_width=True)
     with col5:
@@ -460,18 +482,31 @@ def main():
     # Seletores de data
     col_data1, col_data2 = st.columns(2)
     with col_data1:
-        default_inicial = data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else pd.to_datetime('2024-01-01')
-        data_inicial = st.date_input("Data Inicial", value=default_inicial, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.is_empty() else None)
+        default_inicial = data_filtrada['DATA_PEDIDO'].min().date() if not data_filtrada.is_empty() else date(2024, 1, 1)
+        data_inicial = st.date_input(
+            "Data Inicial",
+            value=default_inicial,
+            min_value=default_inicial if not data_filtrada.is_empty() else None,
+            max_value=data_filtrada['DATA_PEDIDO'].max().date() if not data_filtrada.is_empty() else None
+        )
     with col_data2:
-        data_final = st.date_input("Data Final", value=hoje, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.is_empty() else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.is_empty() else None)
+        default_final = hoje.date()
+        data_final = st.date_input(
+            "Data Final",
+            value=default_final,
+            min_value=default_inicial if not data_filtrada.is_empty() else None,
+            max_value=default_final
+        )
 
     if data_inicial > data_final:
         st.error("A Data Inicial não pode ser maior que a Data Final.")
         return
 
     # Filtrar dados pelo período selecionado
-    df_periodo = data_filtrada.filter((pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) & 
-                                     (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final)))
+    df_periodo = data_filtrada.filter(
+        (pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) & 
+        (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final))
+    )
 
     if df_periodo.is_empty():
         st.warning("Nenhum dado disponível para o período selecionado.")
@@ -492,10 +527,15 @@ def main():
     vendas_por_mes_ano_pandas = vendas_por_mes_ano.to_pandas()
 
     # Criar gráfico de linhas com uma linha por ano
-    fig = px.line(vendas_por_mes_ano_pandas, x='Mês', y='Valor_Total_Vendido', color='Ano',
-                  title=f'Vendas por Mês ({data_inicial} a {data_final})',
-                  labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
-                  markers=True)
+    fig = px.line(
+        vendas_por_mes_ano_pandas,
+        x='Mês',
+        y='Valor_Total_Vendido',
+        color='Ano',
+        title=f'Vendas por Mês ({data_inicial} a {data_final})',
+        labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
+        markers=True
+    )
 
     # Ajustes visuais
     fig.update_layout(
@@ -505,7 +545,11 @@ def main():
         xaxis_tickfont_size=14,
         yaxis_tickfont_size=14,
         xaxis_tickangle=-45,
-        xaxis=dict(tickmode='array', tickvals=list(range(1, 13)), ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'])
+        xaxis=dict(
+            tickmode='array',
+            tickvals=list(range(1, 13)),
+            ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        )
     )
 
     st.plotly_chart(fig, use_container_width=True)
