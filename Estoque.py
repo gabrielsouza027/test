@@ -158,8 +158,6 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-
-
     data_final = datetime.date.today()  # 15 de maio de 2025, 21:24 -03
     data_inicial = data_final - datetime.timedelta(days=60)
 
