@@ -13,6 +13,8 @@ import os
 from urllib.parse import urlencode
 import threading
 import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -96,7 +98,7 @@ class SupabaseConnection:
             return "1970-01-01T00:00:00Z"
 
     def fetch_new_data(self, table, page_size=1000):
-        """Fetch data from Supabase, either all data (initial fetch) or new data."""
+        """Fetch data from Supabase with retries, using record count for pagination."""
         table_name = table["table_name"]
         latest_timestamp = self._get_latest_timestamp()
         logger.info(f"Buscando dados da tabela {table_name} após {latest_timestamp}")
@@ -112,11 +114,16 @@ class SupabaseConnection:
         
         all_data = []
         offset = 0
+        # Configurar sessão com retries
+        session = requests.Session()
+        retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+        session.mount("https://", HTTPAdapter(max_retries=retries))
+
         while True:
             headers = self.headers.copy()
             headers["Range"] = f"{offset}-{offset + page_size - 1}"
             try:
-                response = requests.get(url, headers=headers, timeout=30)
+                response = session.get(url, headers=headers, timeout=30)
                 response.raise_for_status()
                 data = response.json()
                 if not data:
@@ -126,20 +133,14 @@ class SupabaseConnection:
                 offset += len(data)
                 logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total: {len(all_data)}")
                 
-                # Log Content-Range for debugging
-                content_range = response.headers.get("Content-Range", "")
-                logger.info(f"Content-Range: {content_range}")
-                
-                # Handle Content-Range with '*' (unknown total)
-                if "/" in content_range and content_range.split("/")[-1] == "*":
-                    logger.warning(f"Content-Range contém '*', usando len(data) para paginação")
-                
                 # Stop if fewer than page_size records are returned
                 if len(data) < page_size:
                     break
             except requests.exceptions.RequestException as e:
                 logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
                 return all_data  # Return partial data if available
+            finally:
+                session.close()
 
         # Log unique CODFILIAL values for debugging
         codfiliais = set(record.get('CODFILIAL') for record in all_data)
