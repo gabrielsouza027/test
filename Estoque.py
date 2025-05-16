@@ -64,7 +64,7 @@ def fetch_supabase_page(table, offset, limit, filter_query=None):
         logger.error(f"Erro ao buscar página da tabela {table}, offset {offset}: {e}")
         raise
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=900)
 def fetch_supabase_data(table, columns_expected, date_column=None, last_update=None):
     """Busca dados do Supabase com cache."""
     key = f"{table}_{last_update or 'full'}"
