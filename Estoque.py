@@ -25,7 +25,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 # Inicializar cliente Supabase com timeout
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(timeout=30))
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
     st.error(f"Erro ao inicializar o cliente Supabase: {e}")
     st.stop()
