@@ -15,19 +15,19 @@ try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except KeyError as e:
-    st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
+    logger.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
     st.stop()
 
 # Validar URL e chave
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("Erro: SUPABASE_URL ou SUPABASE_KEY não estão definidos.")
+    logger.error("Erro: SUPABASE_URL ou SUPABASE_KEY não estão definidos.")
     st.stop()
 
 # Inicializar cliente Supabase
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    st.error(f"Erro ao inicializar o cliente Supabase: {e}")
+    logger.error(f"Erro ao inicializar o cliente Supabase: {e}")
     st.stop()
 
 # Configuração das tabelas e colunas esperadas
@@ -91,24 +91,27 @@ def fetch_supabase_data(table, columns_expected, date_column=None, start_date=No
 
         if not all_data:
             logger.warning(f"Nenhum dado retornado da tabela {table}")
-            st.warning(f"Nenhum dado retornado da tabela {table}.")
             return pd.DataFrame()
 
         df = pd.DataFrame(all_data)
         missing_columns = [col for col in columns_expected if col not in df.columns]
         if missing_columns:
-            st.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
-            logger.error(f"Colunas ausentes: {missing_columns}")
+            logger.error(f"Colunas ausentes na tabela {table}: {missing_columns}")
             return pd.DataFrame()
 
         if date_column in df.columns:
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
             df = df.dropna(subset=[date_column])
 
+        if len(df) == 0:
+            logger.warning(f"Dados vazios após conversão de datas para {table}")
+        else:
+            logger.info(f"Dados carregados com sucesso da tabela {table}: {len(df)} registros")
+
+        return df
 
     except Exception as e:
-        st.error(f"Erro ao buscar dados da tabela {table}: {e}")
-        logger.error(f"Erro geral: {e}")
+        logger.error(f"Erro ao buscar dados da tabela {table}: {e}")
         return pd.DataFrame()
 
 def fetch_vendas_data(start_date=None, end_date=None):
@@ -158,23 +161,21 @@ def main():
     st.title("📦 Análise de Estoque e Vendas")
     st.markdown("Análise dos produtos vendidos e estoque disponível.")
 
-    data_final = datetime.date.today()  # 15 de maio de 2025, 21:24 -03
+    auto_reload()
+
+    data_final = datetime.date.today()  # 15 de maio de 2025, 21:30 -03
     data_inicial = data_final - datetime.timedelta(days=60)
 
     with st.spinner("Carregando dados de vendas..."):
         vendas_df = fetch_vendas_data(start_date=data_inicial, end_date=data_final)
 
-    if vendas_df.empty:
-        st.warning("Não há vendas para o período selecionado.")
-    else:
+    if not vendas_df.empty:
         vendas_grouped = vendas_df.groupby('CODPROD')['QT'].sum().reset_index()
 
     with st.spinner("Carregando dados de estoque..."):
         estoque_df = fetch_estoque_data(start_date=data_inicial, end_date=data_final)
 
-    if estoque_df.empty:
-        st.warning("Não há dados de estoque para o período selecionado.")
-    else:
+    if not estoque_df.empty:
         merged_df = pd.merge(vendas_grouped, estoque_df[['CODPROD', 'NOME_PRODUTO', 'QT_ESTOQUE']], on='CODPROD', how='left')
         sem_estoque_df = merged_df[merged_df['QT_ESTOQUE'].isna() | (merged_df['QT_ESTOQUE'] <= 0)]
 
@@ -227,14 +228,14 @@ def main():
             }
         )
         gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)  # 10 linhas por página
-        gb.configure_grid_options(domLayout='normal')
+        gb.configure_grid_options(
+            domLayout='autoHeight',  # Ajuste automático da altura
+            autoSizeColumns=True  # Ajuste automático da largura das colunas
+        )
         grid_options = gb.build()
 
-        # Ajustar largura das colunas para preencher a tela
-        grid_options['fit_columns_on_grid_load'] = True
-
-        # Altura fixa com paginação
-        height = 300  # Altura fixa
+        # Altura automática
+        height = None  # Usar autoHeight
 
         df_display = df.copy()
         for col in ['Estoque Disponível', 'Quantidade Reservada', 'Quantidade Bloqueada', 'Quantidade Avariada', 'Quantidade Total', 'Quantidade Última Entrada']:
@@ -244,10 +245,8 @@ def main():
 
         AgGrid(df_display, gridOptions=grid_options, update_mode=GridUpdateMode.NO_UPDATE, allow_unsafe_jscode=True, height=height, theme='streamlit')
 
-        if sem_estoque_df.empty:
-            st.info("Não há produtos vendidos sem estoque.")
-        else:
-            st.subheader("Produtos Sem Estoque com Venda nos Últimos 2 Meses")
+        if not sem_estoque_df.empty:
+            st.subheader("❌ Produtos Sem Estoque com Venda nos Últimos 2 Meses")
 
             sem_estoque_df_renomeado = sem_estoque_df[sem_estoque_df['QT_ESTOQUE'].isna() | (sem_estoque_df['QT_ESTOQUE'] <= 0)]
             sem_estoque_df_renomeado = sem_estoque_df_renomeado.rename(columns={
@@ -290,14 +289,14 @@ def main():
                 }
             )
             gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)  # 10 linhas por página
-            gb.configure_grid_options(domLayout='normal')
+            gb.configure_grid_options(
+                domLayout='autoHeight',  # Ajuste automático da altura
+                autoSizeColumns=True  # Ajuste automático da largura das colunas
+            )
             grid_options = gb.build()
 
-            # Ajustar largura das colunas para preencher a tela
-            grid_options['fit_columns_on_grid_load'] = True
-
-            # Altura fixa com paginação
-            height_sem_estoque = 300  # Altura fixa
+            # Altura automática
+            height_sem_estoque = None  # Usar autoHeight
 
             df_sem_estoque_display = sem_estoque_df_renomeado.copy()
             df_sem_estoque_display['QUANTIDADE VENDIDA'] = pd.to_numeric(df_sem_estoque_display['QUANTIDADE VENDIDA'], errors='coerce').fillna(0)
