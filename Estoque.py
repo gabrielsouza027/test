@@ -73,7 +73,7 @@ def fetch_supabase_data(table, columns_expected, date_column=None, last_update=N
     try:
         all_data = []
         limit = 100  # Aumentado para reduzir número de requisições
-        max_pages = 10  # Ajustado para evitar excesso de chamadas
+        max_pages = 1000000  # Ajustado para evitar excesso de chamadas
         filters = []
 
         if last_update and date_column:
@@ -158,7 +158,7 @@ def main():
 
     
     data_final = datetime.date.today()
-    data_inicial = data_final - datetime.timedelta(days=370)
+    data_inicial = data_final - datetime.timedelta(days=60)
    
 
     with st.spinner("Carregando dados de vendas..."):
