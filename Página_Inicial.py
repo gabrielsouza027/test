@@ -1,10 +1,15 @@
 import streamlit as st
+import polars as pl
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import locale
 import plotly.express as px
 import logging
+from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+import pickle
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -24,10 +29,6 @@ SUPABASE_TABLES = [
         "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/PCPEDC?select=*"
     },
     # Adicione mais tabelas aqui, se necessário
-    # {
-    #     "table_name": "VWSOMELIER",
-    #     "url": f"{st.secrets['SUPABASE_URL']}/rest/v1/VWSOMELIER?select=*"
-    # },
 ]
 
 # Cabeçalhos comuns para todas as requisições
@@ -42,109 +43,172 @@ def get_headers():
         st.error(f"Erro: Variável {e} não encontrada no secrets.toml. Verifique a configuração no Streamlit Cloud.")
         st.stop()
 
-# Função para obter dados do Supabase com cache e paginação
-@st.cache_data(show_spinner=False, ttl=900)
-def carregar_dados():
+# Função para carregar dados de uma única tabela com suporte a filtros de data
+def fetch_table_data(table, page_size=1000, last_fetched=None):
+    table_name = table["table_name"]
+    url = table["url"]
+    if last_fetched:
+        # Adicionar filtro para buscar apenas registros após last_fetched
+        url += f"&DATA_PEDIDO=gt.{last_fetched.strftime('%Y-%m-%dT%H:%M:%S')}"
+    logger.info(f"Carregando dados da tabela {table_name} com URL: {url}")
     all_data = []
-    page_size = 1000  # Tamanho do lote por requisição
 
+    offset = 0
+    while True:
+        headers = get_headers()
+        headers["Range"] = f"{offset}-{offset + page_size - 1}"
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            if not data:
+                logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
+                break
+            all_data.extend(data)
+            offset += page_size
+            logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
+            return []
+
+    return all_data
+
+# Função para salvar e carregar cache em arquivo
+def save_cache(data, filename="cache.pkl"):
     try:
-        for table in SUPABASE_TABLES:
-            table_name = table["table_name"]
-            url = table["url"]
-            logger.info(f"Carregando dados da tabela {table_name}")
-            
-            offset = 0
-            while True:
-                # Define o intervalo para a paginação
-                headers = get_headers()
-                headers["Range"] = f"{offset}-{offset + page_size - 1}"
-                
-                # Faz a requisição
-                try:
-                    response = requests.get(url, headers=headers, timeout=10)
-                    response.raise_for_status()  # Levanta exceção para erros HTTP
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-                    st.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
-                    return pd.DataFrame()
+        with open(filename, "wb") as f:
+            pickle.dump(data, f)
+        logger.info(f"Cache salvo em {filename}")
+    except Exception as e:
+        logger.warning(f"Erro ao salvar cache: {e}")
 
-                data = response.json()
-                if not data:  # Se não houver mais dados, interrompe o loop
-                    logger.info(f"Finalizada a recuperação de dados da tabela {table_name}")
-                    break
-                
-                # Adiciona os dados da página atual à lista
-                all_data.extend(data)
-                offset += page_size  # Avança para a próxima página
-                logger.info(f"Recuperados {len(data)} registros da tabela {table_name}, total até agora: {len(all_data)}")
-
-        # Converte para DataFrame
-        if all_data:
-            data = pd.DataFrame(all_data)
-            # Verificar se as colunas necessárias existem
-            required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
-            missing_columns = [col for col in required_columns if col not in data.columns]
-            if missing_columns:
-                logger.error(f"Colunas ausentes nos dados: {missing_columns}")
-                st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
-                return pd.DataFrame()
-
-            # Garantir tipos de dados
-            data['PVENDA'] = pd.to_numeric(data['PVENDA'], errors='coerce').fillna(0).astype('float32')
-            data['QT'] = pd.to_numeric(data['QT'], errors='coerce').fillna(0).astype('int32')
-            data['CODFILIAL'] = data['CODFILIAL'].astype(str)
-            data['NUMPED'] = data['NUMPED'].astype(str)
-
-            # Calcular VLTOTAL como PVENDA * QT
-            data['VLTOTAL'] = data['PVENDA'] * data['QT']
-            
-            # Filtrar apenas filiais 1 e 2
-            data = data[data['CODFILIAL'].isin(['1', '2'])].copy()
-            
-            # Converter DATA_PEDIDO para datetime
-            data['DATA_PEDIDO'] = pd.to_datetime(data['DATA_PEDIDO'], errors='coerce')
-            if data['DATA_PEDIDO'].isnull().any():
-                logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
-                st.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'. Filtrando registros inválidos.")
-                data = data.dropna(subset=['DATA_PEDIDO'])
-            
-            logger.info(f"Dados carregados com sucesso: {len(data)} registros")
+def load_cache(filename="cache.pkl"):
+    try:
+        if os.path.exists(filename):
+            with open(filename, "rb") as f:
+                data = pickle.load(f)
+            logger.info(f"Cache carregado de {filename}")
+            return data
         else:
-            logger.warning("Nenhum dado retornado pela API")
+            logger.info("Nenhum cache encontrado")
+            return None
+    except Exception as e:
+        logger.warning(f"Erro ao carregar cache: {e}")
+        return None
+
+# Função para carregar dados do Supabase com cache e paralelismo
+@st.cache_data(show_spinner=False, ttl=900)
+def carregar_dados(_last_fetched=None):
+    try:
+        # Carregar cache existente
+        cached_data = load_cache()
+        cached_df = pl.DataFrame(cached_data) if cached_data else pl.DataFrame()
+
+        # Carregar dados novos em paralelo usando ThreadPoolExecutor
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(lambda table: fetch_table_data(table, last_fetched=_last_fetched), SUPABASE_TABLES))
+
+        # Combinar todos os dados novos
+        all_data = []
+        for result in results:
+            all_data.extend(result)
+
+        if not all_data and cached_data is None:
+            logger.warning("Nenhum dado retornado pela API e nenhum cache disponível")
             st.error("Nenhum dado retornado pela API.")
-            data = pd.DataFrame()
+            return pl.DataFrame()
+
+        # Converter novos dados para Polars DataFrame
+        new_df = pl.DataFrame(all_data) if all_data else pl.DataFrame()
+
+        # Combinar dados novos com cache, removendo duplicatas
+        if not new_df.is_empty():
+            if not cached_df.is_empty():
+                # Assumir que NUMPED é único para evitar duplicatas
+                combined_df = pl.concat([cached_df, new_df]).unique(subset=["NUMPED"])
+            else:
+                combined_df = new_df
+        else:
+            combined_df = cached_df
+
+        # Verificar se as colunas necessárias existem
+        required_columns = ['PVENDA', 'QT', 'CODFILIAL', 'DATA_PEDIDO', 'NUMPED']
+        missing_columns = [col for col in required_columns if col not in combined_df.columns]
+        if missing_columns:
+            logger.error(f"Colunas ausentes nos dados: {missing_columns}")
+            st.error(f"Colunas ausentes nos dados retornados pela API: {missing_columns}")
+            return pl.DataFrame()
+
+        # Garantir tipos de dados
+        combined_df = combined_df.with_columns([
+            pl.col('PVENDA').cast(pl.Float32, strict=False).fill_null(0),
+            pl.col('QT').cast(pl.Int32, strict=False).fill_null(0),
+            pl.col('CODFILIAL').cast(pl.Utf8),
+            pl.col('NUMPED').cast(pl.Utf8),
+            pl.col('DATA_PEDIDO').str.to_datetime(format="%Y-%m-%d", strict=False)
+        ])
+
+        # Calcular VLTOTAL como PVENDA * QT
+        combined_df = combined_df.with_columns((pl.col('PVENDA') * pl.col('QT')).alias('VLTOTAL'))
+
+        # Filtrar apenas filiais 1 e 2
+        combined_df = combined_df.filter(pl.col('CODFILIAL').is_in(['1', '2']))
+
+        # Remover registros com DATA_PEDIDO nula
+        if combined_df['DATA_PEDIDO'].is_null().any():
+            logger.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'.")
+            st.warning("Valores inválidos encontrados na coluna 'DATA_PEDIDO'. Filtrando registros inválidos.")
+            combined_df = combined_df.filter(pl.col('DATA_PEDIDO').is_not_null())
+
+        # Salvar cache atualizado
+        if not combined_df.is_empty():
+            save_cache(combined_df.to_dicts())
+
+        logger.info(f"Dados carregados com sucesso: {len(combined_df)} registros")
+        return combined_df
 
     except Exception as e:
         logger.error(f"Erro geral ao processar dados: {e}")
         st.error(f"Erro ao processar dados: {e}")
-        data = pd.DataFrame()
+        return pl.DataFrame()
 
-    return data
-
-# Funções de cálculo
+# Funções de cálculo ajustadas para Polars
 def calcular_faturamento(data, hoje, ontem, semana_inicial, semana_passada_inicial):
-    faturamento_hoje = data[data['DATA_PEDIDO'] == hoje]['VLTOTAL'].sum()
-    faturamento_ontem = data[data['DATA_PEDIDO'] == ontem]['VLTOTAL'].sum()
-    faturamento_semanal_atual = data[(data['DATA_PEDIDO'] >= semana_inicial) & (data['DATA_PEDIDO'] <= hoje)]['VLTOTAL'].sum()
-    faturamento_semanal_passada = data[(data['DATA_PEDIDO'] >= semana_passada_inicial) & (data['DATA_PEDIDO'] < semana_inicial)]['VLTOTAL'].sum()
+    faturamento_hoje = data.filter(pl.col('DATA_PEDIDO') == hoje)['VLTOTAL'].sum()
+    faturamento_ontem = data.filter(pl.col('DATA_PEDIDO') == ontem)['VLTOTAL'].sum()
+    faturamento_semanal_atual = data.filter((pl.col('DATA_PEDIDO') >= semana_inicial) & (pl.col('DATA_PEDIDO') <= hoje))['VLTOTAL'].sum()
+    faturamento_semanal_passada = data.filter((pl.col('DATA_PEDIDO') >= semana_pass and (pl.col('DATA_PEDIDO') < semana_inicial))['VLTOTAL'].sum()
     return faturamento_hoje, faturamento_ontem, faturamento_semanal_atual, faturamento_semanal_passada
 
 def calcular_quantidade_pedidos(data, hoje, ontem, semana_inicial, semana_passada_inicial):
-    pedidos_hoje = data[data['DATA_PEDIDO'] == hoje]['NUMPED'].nunique()
-    pedidos_ontem = data[data['DATA_PEDIDO'] == ontem]['NUMPED'].nunique()
-    pedidos_semanal_atual = data[(data['DATA_PEDIDO'] >= semana_inicial) & (data['DATA_PEDIDO'] <= hoje)]['NUMPED'].nunique()
-    pedidos_semanal_passada = data[(data['DATA_PEDIDO'] >= semana_passada_inicial) & (data['DATA_PEDIDO'] < semana_inicial)]['NUMPED'].nunique()
+    pedidos_hoje = data.filter(pl.col('DATA_PEDIDO') == hoje)['NUMPED'].n_unique()
+    pedidos_ontem = data.filter(pl.col('DATA_PEDIDO') == ontem)['NUMPED'].n_unique()
+    pedidos_semanal_atual = data.filter((pl.col('DATA_PEDIDO') >= semana_inicial) & (pl.col('DATA_PEDIDO') <= hoje))['NUMPED'].n_unique()
+    pedidos_semanal_passada = data.filter((pl.col('DATA_PEDIDO') >= semana_passada_inicial) & (pl.col('DATA_PEDIDO') < semana_inicial))['NUMPED'].n_unique()
     return pedidos_hoje, pedidos_ontem, pedidos_semanal_atual, pedidos_semanal_passada
 
 def calcular_comparativos(data, hoje, mes_atual, ano_atual):
     mes_anterior = mes_atual - 1 if mes_atual > 1 else 12
     ano_anterior = ano_atual if mes_atual > 1 else ano_atual - 1
-    faturamento_mes_atual = data[(data['DATA_PEDIDO'].dt.month == mes_atual) & (data['DATA_PEDIDO'].dt.year == ano_atual)]['VLTOTAL'].sum()
-    pedidos_mes_atual = data[(data['DATA_PEDIDO'].dt.month == mes_atual) & (data['DATA_PEDIDO'].dt.year == ano_atual)]['NUMPED'].nunique()
-    faturamento_mes_anterior = data[(data['DATA_PEDIDO'].dt.month == mes_anterior) & (data['DATA_PEDIDO'].dt.year == ano_anterior)]['VLTOTAL'].sum()
-    pedidos_mes_anterior = data[(data['DATA_PEDIDO'].dt.month == mes_anterior) & (data['DATA_PEDIDO'].dt.year == ano_anterior)]['NUMPED'].nunique()
+    faturamento_mes_atual = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_atual) & (pl.col('DATA_PEDIDO').dt.year() == ano_atual))['VLTOTAL'].sum()
+    pedidos_mes_atual = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_atual) & (pl.col('DATA_PEDIDO').dt.year() == ano_atual))['NUMPED'].n_unique()
+    faturamento_mes_anterior = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_anterior) & (pl.col('DATA_PEDIDO').dt.year() == ano_anterior))['VLTOTAL'].sum()
+    pedidos_mes_anterior = data.filter((pl.col('DATA_PEDIDO').dt.month() == mes_anterior) & (pl.col('DATA_PEDIDO').dt.year() == ano_anterior))['NUMPED'].n_unique()
     return faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior
+
+def calcular_variacao(atual, anterior):
+    if anterior == 0:
+        return 0
+    return ((atual - anterior) / anterior) * 100
+
+def icone_variacao(valor):
+    if valor > 0:
+        return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
+    elif valor < 0:
+        return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
+    else:
+        return f"{valor:.2f}%"
 
 def formatar_valor(valor):
     try:
@@ -152,11 +216,21 @@ def formatar_valor(valor):
     except Exception:
         return f"R$ {valor:,.2f}"
 
-def main():
+def grafico_pizza_variacao(labels, valores, titulo):
+    fig = px.pie(
+        names=labels,
+        values=valores,
+        title=titulo,
+        hole=0.4,
+        color=labels,
+        color_discrete_map={"Positivo": "green", "Negativo": "red"}
+    )
+    fig.update_layout(margin=dict(t=30, b=30, l=30, r=30))
+    return fig
 
-    
+def main():
     st.markdown("""
-    <style>
+        <style>
         .st-emotion-cache-1ibsh2c {
             width: 100%;
             padding: 0rem 1rem 0rem;
@@ -189,17 +263,24 @@ def main():
             font-weight: bold;
             margin-top: 5px;
         }
-    </style>
+        </style>
     """, unsafe_allow_html=True)
 
     st.title('Dashboard de Faturamento')
     st.markdown("### Resumo de Vendas")
 
+    # Inicializar session state para last_fetched
+    if 'last_fetched' not in st.session_state:
+        st.session_state.last_fetched = None
+
     # Carregar dados com cache
     with st.spinner("Carregando dados do Supabase..."):
-        data = carregar_dados()
-    
-    if data.empty:
+        data = carregar_dados(_last_fetched=st.session_state.last_fetched)
+        # Atualizar last_fetched para a data mais recente
+        if not data.is_empty():
+            st.session_state.last_fetched = data['DATA_PEDIDO'].max()
+
+    if data.is_empty():
         st.error("Não foi possível carregar os dados. Verifique as configurações da API ou tente novamente.")
         return
 
@@ -222,9 +303,10 @@ def main():
         return
 
     # Filtrar dados com base nas filiais selecionadas
-    data_filtrada = data[data['CODFILIAL'].isin(filiais_selecionadas)].copy()
+    data_filtrada = data.filter(pl.col('CODFILIAL').is_in(filiais_selecionadas))
 
-    hoje = pd.to_datetime('2025-05-13').normalize()  # Data fixa conforme contexto
+    today = datetime.today()
+    hoje = pd.to_datetime(today).normalize()
     ontem = hoje - timedelta(days=1)
     semana_inicial = hoje - timedelta(days=hoje.weekday())
     semana_passada_inicial = semana_inicial - timedelta(days=7)
@@ -236,38 +318,15 @@ def main():
     ano_atual = hoje.year
     faturamento_mes_atual, faturamento_mes_anterior, pedidos_mes_atual, pedidos_mes_anterior = calcular_comparativos(data_filtrada, hoje, mes_atual, ano_atual)
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    def calcular_variacao(atual, anterior):
-        if anterior == 0:
-            return 100 if atual > 0 else 0
-        return ((atual - anterior) / anterior) * 100
-    
-    def icone_variacao(valor):
-        if valor > 0:
-            return f"<span style='color: green;'>▲ {valor:.2f}%</span>"
-        elif valor < 0:
-            return f"<span style='color: red;'>▼ {valor:.2f}%</span>"
-        else:
-            return f"{valor:.2f}%"
-
+    # Calcular variações
     var_faturamento_mes = calcular_variacao(faturamento_mes_atual, faturamento_mes_anterior)
     var_pedidos_mes = calcular_variacao(pedidos_mes_atual, pedidos_mes_anterior)
     var_faturamento_hoje = calcular_variacao(faturamento_hoje, faturamento_ontem)
     var_pedidos_hoje = calcular_variacao(pedidos_hoje, pedidos_ontem)
     var_faturamento_semananterior = calcular_variacao(faturamento_semanal_atual, faturamento_semanal_passada)
 
-    def grafico_pizza_variacao(labels, valores, titulo):
-        fig = px.pie(
-            names=labels,
-            values=valores,
-            title=titulo,
-            hole=0.4,
-            color=labels,
-            color_discrete_map={"Positivo": "green", "Negativo": "red"}
-        )
-        fig.update_layout(margin=dict(t=30, b=30, l=30, r=30))
-        return fig
+    # Definir colunas para exibição
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.markdown(f"""
@@ -362,40 +421,64 @@ def main():
     st.markdown("---")
     st.subheader("Comparação de Vendas por Mês e Ano")
 
-    # Seletores de data
+    # Seletores de data com tratamento para dados vazios
     col_data1, col_data2 = st.columns(2)
+    default_date = pd.to_datetime('2024-01-01')
     with col_data1:
-        default_inicial = data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else pd.to_datetime('2024-01-01')
-        data_inicial = st.date_input("Data Inicial", value=default_inicial, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.empty else None)
+        min_date = pd.to_datetime(data_filtrada['DATA_PEDIDO'].min()) if not data_filtrada.is_empty() else default_date
+        max_date = pd.to_datetime(data_filtrada['DATA_PEDIDO'].max()) if not data_filtrada.is_empty() else hoje
+        data_inicial = st.date_input(
+            "Data Inicial",
+            value=min_date.date() if min_date else default_date.date(),
+            min_value=min_date.date() if min_date else None,
+            max_value=max_date.date() if max_date else None
+        )
     with col_data2:
-        data_final = st.date_input("Data Final", value=hoje, min_value=data_filtrada['DATA_PEDIDO'].min() if not data_filtrada.empty else None, max_value=data_filtrada['DATA_PEDIDO'].max() if not data_filtrada.empty else None)
+        data_final = st.date_input(
+            "Data Final",
+            value=max_date.date() if max_date else hoje.date(),
+            min_value=min_date.date() if min_date else None,
+            max_value=max_date.date() if max_date else None
+        )
 
     if data_inicial > data_final:
         st.error("A Data Inicial não pode ser maior que a Data Final.")
         return
 
     # Filtrar dados pelo período selecionado
-    df_periodo = data_filtrada[(data_filtrada['DATA_PEDIDO'] >= pd.to_datetime(data_inicial)) & 
-                               (data_filtrada['DATA_PEDIDO'] <= pd.to_datetime(data_final))].copy()
+    df_periodo = data_filtrada.filter(
+        (pl.col('DATA_PEDIDO') >= pd.to_datetime(data_inicial)) &
+        (pl.col('DATA_PEDIDO') <= pd.to_datetime(data_final))
+    )
 
-    if df_periodo.empty:
+    if df_periodo.is_empty():
         st.warning("Nenhum dado disponível para o período selecionado.")
         return
 
     # Adicionar colunas de ano e mês
-    df_periodo['Ano'] = df_periodo['DATA_PEDIDO'].dt.year.astype(str)  # Converter para string para evitar problemas no Plotly
-    df_periodo['Mês'] = df_periodo['DATA_PEDIDO'].dt.month
+    df_periodo = df_periodo.with_columns([
+        pl.col('DATA_PEDIDO').dt.year().cast(pl.Utf8).alias('Ano'),
+        pl.col('DATA_PEDIDO').dt.month().alias('Mês')
+    ])
 
     # Agrupar por ano e mês
-    vendas_por_mes_ano = df_periodo.groupby(['Ano', 'Mês']).agg(
-        Valor_Total_Vendido=('VLTOTAL', 'sum')
-    ).reset_index()
+    vendas_por_mes_ano = df_periodo.group_by(['Ano', 'Mês']).agg(
+        Valor_Total_Vendido=pl.col('VLTOTAL').sum()
+    ).sort(['Ano', 'Mês'])
+
+    # Converter para Pandas para compatibilidade com Plotly
+    vendas_por_mes_ano_pandas = vendas_por_mes_ano.to_pandas()
 
     # Criar gráfico de linhas com uma linha por ano
-    fig = px.line(vendas_por_mes_ano, x='Mês', y='Valor_Total_Vendido', color='Ano',
-                  title=f'Vendas por Mês ({data_inicial} a {data_final})',
-                  labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
-                  markers=True)
+    fig = px.line(
+        vendas_por_mes_ano_pandas,
+        x='Mês',
+        y='Valor_Total_Vendido',
+        color='Ano',
+        title=f'Vendas por Mês ({data_inicial} a {data_final})',
+        labels={'Mês': 'Mês', 'Valor_Total_Vendido': 'Valor Total Vendido (R$)', 'Ano': 'Ano'},
+        markers=True
+    )
 
     # Ajustes visuais
     fig.update_layout(
@@ -405,7 +488,11 @@ def main():
         xaxis_tickfont_size=14,
         yaxis_tickfont_size=14,
         xaxis_tickangle=-45,
-        xaxis=dict(tickmode='array', tickvals=list(range(1, 13)), ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'])
+        xaxis=dict(
+            tickmode='array',
+            tickvals=list(range(1, 13)),
+            ticktext=['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        )
     )
 
     st.plotly_chart(fig, use_container_width=True)
