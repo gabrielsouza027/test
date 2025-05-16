@@ -231,7 +231,7 @@ def main():
             "buttons": ["reset", "apply"],
         }
     )
-    gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=100)
+    gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
     gb.configure_grid_options(
         domLayout='autoHeight',
         autoSizeColumns=True
@@ -288,7 +288,7 @@ def main():
                 "buttons": ["reset", "apply"],
             }
         )
-        gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=100)
+        gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
         gb.configure_grid_options(
             domLayout='autoHeight',
             autoSizeColumns=True
