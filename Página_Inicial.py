@@ -46,7 +46,7 @@ def get_headers():
 @st.cache_data(show_spinner=False, ttl=900)
 def carregar_dados():
     all_data = []
-    page_size = 1000  # Tamanho do lote por requisição
+    page_size = 150023  # Tamanho do lote por requisição
 
     try:
         for table in SUPABASE_TABLES:
@@ -62,7 +62,7 @@ def carregar_dados():
                 
                 # Faz a requisição
                 try:
-                    response = requests.get(url, headers=headers, timeout=30)
+                    response = requests.get(url, headers=headers, timeout=60)
                     response.raise_for_status()  # Levanta exceção para erros HTTP
                 except requests.exceptions.RequestException as e:
                     logger.error(f"Erro ao buscar dados da tabela {table_name}: {e}")
